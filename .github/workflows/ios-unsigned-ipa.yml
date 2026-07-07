@@ -1,0 +1,87 @@
+name: iOS unsigned IPA
+
+# Builds the T3 Code mobile app (preview variant) as an UNSIGNED .ipa on a
+# GitHub-hosted macOS runner. No Apple Developer account is involved: code
+# signing is disabled at build time, and the IPA is signed later on-device
+# via free-Apple-ID sideloading (Sideloader/AltStore/SideStore).
+
+on:
+  push:
+    branches: [ios-unsigned-ipa]
+  workflow_dispatch:
+
+concurrency:
+  group: ios-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build unsigned iOS IPA (preview variant)
+    runs-on: macos-26
+    timeout-minutes: 120
+    env:
+      APP_VARIANT: preview
+      EXPO_NO_GIT_STATUS: "1"
+      EXPO_NO_TELEMETRY: "1"
+      NODE_OPTIONS: --max-old-space-size=8192
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Select newest Xcode 26
+        run: |
+          ls -d /Applications/Xcode*.app
+          XCODE="$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)"
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
+      - name: Expo prebuild (iOS)
+        working-directory: apps/mobile
+        run: npx expo prebuild --platform ios --no-install
+
+      - name: Pod install
+        working-directory: apps/mobile/ios
+        run: pod install
+
+      - name: Archive (unsigned)
+        working-directory: apps/mobile/ios
+        run: |
+          WORKSPACE="$(ls -d *.xcworkspace | head -n1)"
+          SCHEME="${WORKSPACE%.xcworkspace}"
+          echo "workspace=$WORKSPACE scheme=$SCHEME"
+          set -o pipefail
+          xcodebuild \
+            -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$PWD/build/t3code.xcarchive" \
+            archive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            | tail -400
+
+      - name: Package IPA
+        run: |
+          APP="$(ls -d apps/mobile/ios/build/t3code.xcarchive/Products/Applications/*.app | head -n1)"
+          echo "app=$APP"
+          mkdir -p out/Payload
+          cp -R "$APP" out/Payload/
+          cd out
+          zip -qry t3code-preview-unsigned.ipa Payload
+          ls -la
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: t3code-ios-unsigned-ipa
+          path: out/t3code-preview-unsigned.ipa
+          retention-days: 30
