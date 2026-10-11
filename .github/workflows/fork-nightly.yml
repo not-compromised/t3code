@@ -1,0 +1,355 @@
+# Rolling rebase of this fork's `custom` branch onto the newest upstream
+# nightly, then a Linux desktop build published as a release of this fork.
+# Contract and rules: FORK.md. Release tags reuse the upstream version so
+# installed apps, servers and the version-skew check all see one number.
+name: Fork nightly
+
+on:
+  schedule:
+    # 03:45 US Central; servers install the new release from 04:30.
+    - cron: "45 8 * * *"
+  workflow_dispatch:
+    inputs:
+      target_tag:
+        description: "Upstream nightly tag to rebase onto (default: newest)"
+        required: false
+      allow_protocol_change:
+        description: "Ship even though the orchestration protocol number changed"
+        type: boolean
+        default: false
+  pull_request:
+    branches: [custom]
+
+# Read-only by default; jobs that run repository code (check, build) keep it.
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-nightly-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_URL: https://github.com/pingdotgg/t3code.git
+  UPSTREAM_REPO: pingdotgg/t3code
+  # Public values stock builds embed (repository variables, as upstream keeps them).
+  T3CODE_CLERK_PUBLISHABLE_KEY: ${{ vars.CLERK_PUBLISHABLE_KEY }}
+  T3CODE_RELAY_URL: ${{ vars.RELAY_URL }}
+  VITE_T3CODE_RELAY_URL: ${{ vars.RELAY_URL }}
+
+jobs:
+  rebase:
+    name: Rebase custom onto upstream nightly
+    permissions:
+      contents: read
+      actions: write
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    outputs:
+      skip: ${{ steps.plan.outputs.skip }}
+      tag: ${{ steps.plan.outputs.tag }}
+      version: ${{ steps.plan.outputs.version }}
+      old_custom: ${{ steps.plan.outputs.old_custom }}
+      candidate: ${{ steps.rebase.outputs.candidate }}
+    steps:
+      - name: Keep upstream workflows off
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows" --paginate \
+            --jq '.workflows[] | select(.state == "active") | .path' |
+          while read -r path; do
+            case "$path" in
+              .github/workflows/fork-*.yml) ;;
+              *) gh workflow disable "$(basename "$path")" -R "$GITHUB_REPOSITORY" || true ;;
+            esac
+          done
+
+      # Upstream's vendored .repos tree holds orphaned gitlinks that break
+      # actions/checkout's cleanup, so check out by hand like upstream does.
+      - name: Checkout custom
+        env:
+          FORK_DEPLOY_KEY: ${{ secrets.FORK_DEPLOY_KEY }}
+        run: |
+          # Pushes go over the fork's deploy key: GITHUB_TOKEN may not push
+          # commits that change workflow files, and upstream's often do.
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$FORK_DEPLOY_KEY" > ~/.ssh/fork_deploy && chmod 600 ~/.ssh/fork_deploy
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/fork_deploy -o IdentitiesOnly=yes"
+          echo "GIT_SSH_COMMAND=$GIT_SSH_COMMAND" >> "$GITHUB_ENV"
+          git init -q .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git remote set-url --push origin "git@github.com:${GITHUB_REPOSITORY}.git"
+          git remote add upstream "$UPSTREAM_URL"
+          git fetch -q --filter=blob:none origin custom upstream-mirror
+          git sparse-checkout set --no-cone '/*' '!/.repos/'
+          git checkout -q -B custom origin/custom
+          git config user.name "t3code fork bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Choose target
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_TAG: ${{ inputs.target_tag }}
+        run: |
+          tag="${TARGET_TAG:-}"
+          if [[ -z "$tag" ]]; then
+            tag="$(gh api "repos/$UPSTREAM_REPO/releases?per_page=30" \
+              --jq '[.[] | select(.draft | not) | select(.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+-nightly\\.[0-9]{8}\\.[0-9]+$"))][0].tag_name')"
+          fi
+          [[ -n "$tag" && "$tag" != null ]] || { echo "::error::no upstream nightly found"; exit 1; }
+          version="${tag#v}"
+          git fetch -q --filter=blob:none upstream "refs/tags/$tag:refs/tags/$tag"
+          old_custom="$(git rev-parse origin/custom)"
+          skip=false
+          if gh release view "$tag" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $tag already published; nothing to ship until upstream moves."
+            skip=true
+          fi
+          {
+            echo "tag=$tag"; echo "version=$version"
+            echo "old_custom=$old_custom"; echo "skip=$skip"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Protocol guard
+        if: steps.plan.outputs.skip == 'false' && !inputs.allow_protocol_change
+        env:
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          file=packages/contracts/src/environment.ts
+          pattern='ORCHESTRATION_PROTOCOL_VERSION = [0-9]+'
+          old="$(git show "origin/upstream-mirror:$file" | grep -oE "$pattern")"
+          new="$(git show "$TAG:$file" | grep -oE "$pattern")"
+          if [[ "$old" != "$new" ]]; then
+            echo "HOLD_REASON=protocol" >> "$GITHUB_ENV"
+            echo "::error::Upstream changed the phone/server protocol ($old -> $new). Ship by hand with allow_protocol_change after updating the phone app."
+            exit 1
+          fi
+
+      - name: Rebase
+        id: rebase
+        if: steps.plan.outputs.skip == 'false'
+        env:
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          if ! git rebase --onto "$TAG" origin/upstream-mirror custom; then
+            git status --short | sed 's/^/conflict: /'
+            git rebase --abort
+            echo "HOLD_REASON=conflict" >> "$GITHUB_ENV"
+            echo "::error::custom does not replay cleanly onto $TAG"
+            exit 1
+          fi
+          git push -q --force origin "custom:refs/heads/fork/candidate"
+          echo "candidate=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Record hold reason
+        if: failure()
+        run: |
+          mkdir -p hold
+          echo "${HOLD_REASON:-rebase-job}" > hold/reason
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: hold-reason
+          path: hold/reason
+
+  check:
+    name: Check
+    needs: rebase
+    if: always() && (github.event_name == 'pull_request' || (needs.rebase.result == 'success' && needs.rebase.outputs.skip == 'false'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        env:
+          REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || needs.rebase.outputs.candidate }}
+          REPO: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name || github.repository }}
+        run: |
+          git init -q .
+          git remote add origin "https://github.com/${REPO}.git"
+          git fetch -q --no-tags --depth=1 origin "$REF"
+          git sparse-checkout set --no-cone '/*' '!/.repos/'
+          git checkout -q --detach FETCH_HEAD
+      # Same system packages as upstream's CI: the desktop tests compile the
+      # libsecret helper and the process-tree fixtures need cc.
+      - name: Install test build libraries
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends build-essential libsecret-1-dev pkg-config
+      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+      - run: vp install
+      - run: vp run --filter @t3tools/desktop ensure:electron
+      - name: Typecheck
+        run: vp run typecheck
+      - name: Fork boundary check
+        env:
+          TAG: ${{ needs.rebase.outputs.tag }}
+        run: |
+          if [[ -n "$TAG" ]]; then
+            git fetch -q --depth=1 "$UPSTREAM_URL" "refs/tags/$TAG:refs/tags/$TAG"
+            base="$TAG"
+          else
+            git fetch -q --depth=1 "https://github.com/${GITHUB_REPOSITORY}.git" upstream-mirror:refs/remotes/origin/upstream-mirror
+            base=origin/upstream-mirror
+          fi
+          bash .github/fork/check-boundaries.sh "$base"
+      - name: Test the client side
+        run: vp run --parallel --concurrency-limit 4 --filter @t3tools/desktop --filter @t3tools/shared --filter @t3tools/contracts --filter @t3tools/client-runtime test
+      - name: Test the web app
+        if: success() || failure()
+        run: vp run --filter @t3tools/web test
+
+  build:
+    name: Build Linux desktop app
+    needs: rebase
+    if: needs.rebase.result == 'success' && needs.rebase.outputs.skip == 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        env:
+          REF: ${{ needs.rebase.outputs.candidate }}
+        run: |
+          git init -q .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git fetch -q --no-tags --depth=1 origin "$REF"
+          git sparse-checkout set --no-cone '/*' '!/.repos/'
+          git checkout -q --detach FETCH_HEAD
+      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+          targets: x86_64-unknown-linux-gnu
+      - name: Install Linux build libraries
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q libsecret-1-dev pkg-config imagemagick
+      - run: vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
+      - name: Align package versions
+        run: node scripts/update-release-package-versions.ts "${{ needs.rebase.outputs.version }}"
+      - name: Build
+        run: vp run build:desktop
+      - name: Package AppImage
+        # GITHUB_REPOSITORY points the app's updater at this fork's releases.
+        run: |
+          vp run dist:desktop:artifact --platform linux --target AppImage --arch x64 \
+            --build-version "${{ needs.rebase.outputs.version }}" --skip-build --verbose
+          ls -la release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-linux
+          # The updater reads nightly-linux.yml; builder-debug.yml stays private.
+          path: |
+            release/*.AppImage
+            release/nightly-linux.yml
+          if-no-files-found: error
+
+  publish:
+    name: Publish
+    permissions:
+      contents: write
+      issues: write
+      actions: write
+    needs: [rebase, check, build]
+    if: needs.rebase.outputs.skip == 'false' && needs.check.result == 'success' && needs.build.result == 'success'
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.rebase.outputs.tag }}
+      CANDIDATE: ${{ needs.rebase.outputs.candidate }}
+      OLD_CUSTOM: ${{ needs.rebase.outputs.old_custom }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop-linux
+          path: dist
+      - name: Move branches
+        env:
+          FORK_DEPLOY_KEY: ${{ secrets.FORK_DEPLOY_KEY }}
+        run: |
+          # Pushes go over the fork's deploy key: GITHUB_TOKEN may not push
+          # commits that change workflow files, and upstream's often do.
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$FORK_DEPLOY_KEY" > ~/.ssh/fork_deploy && chmod 600 ~/.ssh/fork_deploy
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/fork_deploy -o IdentitiesOnly=yes"
+          echo "GIT_SSH_COMMAND=$GIT_SSH_COMMAND" >> "$GITHUB_ENV"
+          git init -q .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git remote set-url --push origin "git@github.com:${GITHUB_REPOSITORY}.git"
+          git fetch -q --filter=blob:none origin fork/candidate
+          git fetch -q --filter=blob:none "$UPSTREAM_URL" "refs/tags/$TAG:refs/tags/$TAG"
+          # Lease on the tip this run rebased, so a change merged meanwhile is never lost.
+          git push --force-with-lease="custom:$OLD_CUSTOM" origin "$CANDIDATE:refs/heads/custom"
+          git push --force origin "refs/tags/$TAG^{commit}:refs/heads/upstream-mirror"
+      - name: Release
+        run: |
+          gh release create "$TAG" dist/* -R "$GITHUB_REPOSITORY" --prerelease \
+            --target "$CANDIDATE" --title "$TAG (fork)" \
+            --notes "Upstream ${TAG} with this fork's custom branch rebased on top ($CANDIDATE). See FORK.md."
+      # Moving custom registers any workflow upstream added; switch it off now
+      # rather than at the next run, before it can fire with this repo's secrets.
+      - name: Keep upstream workflows off
+        run: |
+          sleep 15
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows" --paginate \
+            --jq '.workflows[] | select(.state == "active") | .path' |
+          while read -r path; do
+            case "$path" in
+              .github/workflows/fork-*.yml) ;;
+              *) gh workflow disable "$(basename "$path")" -R "$GITHUB_REPOSITORY" || true ;;
+            esac
+          done
+      - name: Close holds
+        run: |
+          gh issue list -R "$GITHUB_REPOSITORY" --label rebase-hold --state open --json number --jq '.[].number' |
+          while read -r n; do
+            gh issue close "$n" -R "$GITHUB_REPOSITORY" --comment "Shipped $TAG; hold cleared."
+          done
+
+  hold:
+    name: Hold
+    permissions:
+      issues: write
+    needs: [rebase, check, build, publish]
+    if: always() && github.event_name != 'pull_request' && (needs.rebase.result == 'failure' || needs.check.result == 'failure' || needs.build.result == 'failure' || needs.publish.result == 'failure')
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.rebase.outputs.tag }}
+    steps:
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: hold-reason
+          path: hold
+      - name: Open or update the hold issue
+        run: |
+          reason="$(cat hold/reason 2>/dev/null || echo "")"
+          if [[ -z "$reason" ]]; then
+            if [[ "${{ needs.check.result }}" == failure ]]; then reason=check
+            elif [[ "${{ needs.build.result }}" == failure ]]; then reason=build
+            else reason=publish; fi
+          fi
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          body="Nightly held at ${TAG:-unknown target}: **${reason}**. Nothing shipped; every machine stays on the last release.
+
+          Run: $run_url
+
+          Fix by following FORK.md (Rolling rebase). The next successful run closes this issue."
+          gh label create rebase-hold -R "$GITHUB_REPOSITORY" --color B60205 --description "Nightly rebase did not ship" 2>/dev/null || true
+          existing="$(gh issue list -R "$GITHUB_REPOSITORY" --label rebase-hold --state open --json number --jq '.[0].number')"
+          if [[ -n "$existing" ]]; then
+            gh issue comment "$existing" -R "$GITHUB_REPOSITORY" --body "$body"
+          else
+            gh issue create -R "$GITHUB_REPOSITORY" --label rebase-hold --title "Nightly rebase held" --body "$body"
+          fi
