@@ -4,9 +4,8 @@ import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import {
   applyThemePalette,
-  getDesktopLocalTheme,
-  setDesktopLocalTheme,
-  recordManualThemeSelection,
+  DESKTOP_LOCAL_THEME_ID,
+  getDesktopThemeState,
   CUSTOM_THEMES_STORAGE_KEY,
   invalidateCustomThemes,
   canonicalThemePreference,
@@ -67,7 +66,6 @@ export function readThemeHalvesRaw(): { light?: string; dark?: string } {
 }
 
 function readStoredThemeHalves(): ThemeHalves | null {
-  if (getDesktopLocalTheme() !== null) return null;
   if (typeof window === "undefined") return null;
   try {
     return parseThemeHalves(window.localStorage.getItem(THEME_HALVES_STORAGE_KEY));
@@ -149,6 +147,10 @@ function emitChange() {
 }
 
 function getSystemDark() {
+  const desktop = getDesktopThemeState();
+  if (desktop !== null && getStored() === DESKTOP_LOCAL_THEME_ID) {
+    return desktop.appearance === "dark";
+  }
   return (
     typeof window !== "undefined" &&
     typeof window.matchMedia === "function" &&
@@ -175,8 +177,6 @@ function isThemePreferenceMode(value: string | null): value is ThemePreferenceMo
 }
 
 export function readAppearanceModePreference(theme: Theme): ThemePreferenceMode {
-  const localTheme = getDesktopLocalTheme();
-  if (localTheme !== null) return localTheme.appearance;
   if (typeof window !== "undefined") {
     try {
       const raw = window.localStorage.getItem(THEME_APPEARANCE_MODE_STORAGE_KEY);
@@ -239,8 +239,6 @@ export function writeThemePreference(theme: Theme): void {
 }
 
 function getStored(): Theme {
-  const localTheme = getDesktopLocalTheme();
-  if (localTheme !== null) return localTheme.id;
   if (themeStorageReadFailure !== null) {
     return DEFAULT_THEME_SNAPSHOT.theme;
   }
@@ -516,21 +514,12 @@ function subscribe(listener: () => void): () => void {
   };
 }
 
-function pauseDesktopLocalTheme(): () => void {
-  const previous = getDesktopLocalTheme();
-  setDesktopLocalTheme(null);
-  return () => {
-    setDesktopLocalTheme(previous);
-  };
-}
-
 export function useTheme() {
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
   const { theme, resolvedTheme } = snapshot;
 
   const setTheme = useCallback((next: Theme): boolean => {
     if (typeof window === "undefined") return false;
-    const restoreDesktopTheme = pauseDesktopLocalTheme();
     try {
       // Preserve the current mode before replacing a legacy or inferred theme
       // preference. Otherwise a fresh System preference is re-inferred from
@@ -554,7 +543,6 @@ export function useTheme() {
         throw cause;
       }
     } catch (cause) {
-      restoreDesktopTheme();
       const error = isThemeStorageError(cause)
         ? cause
         : new ThemeStorageError({
@@ -571,7 +559,6 @@ export function useTheme() {
       });
       return false;
     }
-    recordManualThemeSelection();
     applyTheme(next, { suppressTransitions: true });
     emitChange();
     return true;
@@ -579,11 +566,9 @@ export function useTheme() {
 
   const setAppearanceMode = useCallback((nextAppearanceMode: ThemePreferenceMode): boolean => {
     if (typeof window === "undefined") return false;
-    const restoreDesktopTheme = pauseDesktopLocalTheme();
     try {
       writeAppearanceModePreference(nextAppearanceMode);
     } catch (cause) {
-      restoreDesktopTheme();
       const error = isThemeStorageError(cause)
         ? cause
         : new ThemeStorageError({
@@ -599,7 +584,6 @@ export function useTheme() {
       return false;
     }
     themeStorageReadFailure = null;
-    recordManualThemeSelection();
     applyTheme(getStored(), { suppressTransitions: true });
     emitChange();
     return true;
@@ -621,7 +605,6 @@ export function useTheme() {
   const setThemeHalf = useCallback(
     (appearance: ThemeAppearance, themeId: string | null): boolean => {
       if (typeof window === "undefined") return false;
-      const restoreDesktopTheme = pauseDesktopLocalTheme();
       try {
         const current = readStoredThemeHalvesRaw();
         const next: { light?: string; dark?: string } = { ...current };
@@ -633,7 +616,6 @@ export function useTheme() {
           window.localStorage.setItem(THEME_HALVES_STORAGE_KEY, JSON.stringify(next));
         }
       } catch (cause) {
-        restoreDesktopTheme();
         const error = new ThemeStorageError({
           operation: "write",
           storageKey: THEME_HALVES_STORAGE_KEY,
@@ -646,7 +628,6 @@ export function useTheme() {
         });
         return false;
       }
-      recordManualThemeSelection();
       applyTheme(getStored(), { suppressTransitions: true });
       emitChange();
       return true;
@@ -656,11 +637,9 @@ export function useTheme() {
 
   const clearThemeHalves = useCallback((): boolean => {
     if (typeof window === "undefined") return false;
-    const restoreDesktopTheme = pauseDesktopLocalTheme();
     try {
       window.localStorage.removeItem(THEME_HALVES_STORAGE_KEY);
     } catch (cause) {
-      restoreDesktopTheme();
       const error = new ThemeStorageError({
         operation: "write",
         storageKey: THEME_HALVES_STORAGE_KEY,
@@ -673,7 +652,6 @@ export function useTheme() {
       });
       return false;
     }
-    recordManualThemeSelection();
     applyTheme(getStored(), { suppressTransitions: true });
     emitChange();
     return true;
