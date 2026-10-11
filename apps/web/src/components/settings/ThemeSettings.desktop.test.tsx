@@ -1,5 +1,4 @@
 // @vitest-environment jsdom
-import * as NodeFS from "node:fs";
 import type { DesktopBridge, DesktopLocalThemeState } from "@t3tools/contracts";
 import { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -109,12 +108,6 @@ describe("desktop theme settings", () => {
     expect(controls.appearanceMode).toBe("system");
     expect(controls.resolvedTheme).toBe("dark");
     expect(document.documentElement.dataset.themeId).toBe(DESKTOP_LOCAL_THEME_ID);
-    if (process.env.T3_THEME_CAPTURE_HTML === "1") {
-      NodeFS.writeFileSync(
-        "/tmp/t3-theme-settings-component.html",
-        `<!doctype html><html class="dark" style="${document.documentElement.style.cssText}"><head><meta charset="utf-8"><title>Theme settings component fixture</title></head><body><main style="max-width:900px;margin:32px auto">${container.innerHTML}</main></body></html>`,
-      );
-    }
   });
 
   it("leaves the source and manual theme untouched after picker cancellation", async () => {
