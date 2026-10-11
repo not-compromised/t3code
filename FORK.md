@@ -24,7 +24,7 @@ nightly.
   merged by squash (or rebase, for a few self-contained commits). The
   repository refuses merge commits, which would break the next replay.
 - When upstream ships a customization, drop its commit at the next rebase and
-  remove its row below.
+  remove its entry below.
 - Resolve a conflict by reading both sides and keeping the intent of each
   customization below. The `custom` force-push uses
   `--force-with-lease=custom:<tip you rebased>`, so a change merged in the
@@ -77,14 +77,67 @@ The desktop app must keep speaking the stock servers' protocol.
   update channel is also off limits.
 
 An owner-approved exception is listed in `.github/fork/boundary-exceptions`
-with its reason in the table below.
+with its reason in that customization's entry below.
 
 ## Customizations
 
-| Commit subject | Purpose | Retire when |
-|---|---|---|
-| `feat(desktop): follow a local palette file independently of servers`, `fix(desktop): preserve local theme ownership during startup`, `feat(desktop): match system colors and configure local palettes` | The desktop app follows a local palette file (the system theme) whatever the server publishes. Exception: `apps/server/src/environmentTheme.ts` only moves its guarded file reader into `packages/shared/src/themeFile.ts` and re-exports it, with no behavior change. | Upstream merges pingdotgg/t3code#17883. |
-| `chore(fork): nightly rolling rebase and release pipeline` | This file, the workflow, the boundary check. | Never. |
+One entry per customization. "Must still be true" lists the behaviour the
+customization exists for, in terms a reviewer can check against the code,
+tests and app. A pull request that adds or changes a customization updates
+its entry in the same PR and adds itself under Detail. Reviewing a pull
+request, resolving a conflict or fixing a hold means confirming every entry
+the change touches still holds; when an entry and the code disagree, the
+entry is the intent and the code is the bug, unless the owner rules
+otherwise.
+
+### Local desktop theme
+
+- **Commits:** `feat(desktop): follow a local palette file independently of servers`,
+  `fix(desktop): preserve local theme ownership during startup`,
+  `feat(desktop): match system colors and configure local palettes`
+- **Must still be true:**
+  - Choosing **System theme** in Settings → Appearance makes the desktop app
+    follow the computer's light/dark appearance and accent, with local
+    environments disabled and when connected to remote servers only.
+  - With no accent exposed, both appearances use T3's standard colors. An
+    accent recolours actions only, never app surfaces or error colours.
+  - On Linux, Omarchy's generated T3 palette is found with no launcher,
+    environment variable or broker, and an Omarchy theme switch is followed.
+  - **Choose theme file** follows that file through atomic replacements and
+    across restarts; **Use automatic colors** returns to detection.
+  - A missing or invalid file keeps the last valid palette from that source,
+    or native colours until one arrives. Files over 32 KiB, non-regular files
+    and symlinks to files are refused.
+  - A manually chosen theme survives file updates, a change of source, server
+    theme pushes, delayed startup responses, navigation and restarts.
+    Changing the source never replaces it.
+  - Web and mobile clients and the stock servers see no change; nothing the
+    desktop app sends a server changes.
+- **Boundary exception:** `apps/server/src/environmentTheme.ts` only moves its
+  guarded file reader into `packages/shared/src/themeFile.ts` and re-exports
+  it, with no behaviour change.
+- **Detail:** pingdotgg/t3code#17883 (pushed before fork PRs were required);
+  user guide in `docs/user/appearance.md`, Desktop colors.
+- **Retire when:** upstream merges pingdotgg/t3code#17883.
+
+### Fork pipeline
+
+- **Commits:** `chore(fork): nightly rolling rebase and release pipeline`
+- **Must still be true:**
+  - Daily at 07:30 UTC and on demand, the newest upstream nightly gets
+    `custom` replayed onto it, checked and built; it ships only when every
+    step is green.
+  - A changed `ORCHESTRATION_PROTOCOL_VERSION` never ships without
+    `allow_protocol_change`.
+  - A release carries the upstream version unchanged, and fork builds update
+    from this repository's releases.
+  - Any failure ships nothing and opens or updates one `rebase-hold` issue;
+    the next success closes it.
+  - The boundary check runs on every pull request and nightly and refuses the
+    refused zone except listed exceptions.
+  - Upstream's own workflows stay disabled.
+- **Detail:** this file and `.github/workflows/fork-nightly.yml`.
+- **Retire when:** never.
 
 ## Verification
 
