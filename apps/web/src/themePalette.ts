@@ -1,3 +1,4 @@
+import type { DesktopLocalThemeState } from "@t3tools/contracts";
 import * as Equal from "effect/Equal";
 import * as Schema from "effect/Schema";
 import "culori/css";
@@ -248,35 +249,32 @@ export function getCustomThemes(): ReadonlyArray<ThemeDefinition> {
 }
 
 export const DESKTOP_LOCAL_THEME_ID = "desktop-local-theme";
-let desktopLocalTheme: ThemeDefinition | null = null;
+// Resolve a saved desktop selection before its first asynchronous snapshot.
+let desktopLocalTheme: ThemeDefinition = {
+  id: DESKTOP_LOCAL_THEME_ID,
+  label: "System theme",
+  appearance: "light",
+  colors: T3_CODE_LIGHT_THEME_COLORS,
+  variants: { dark: T3_CODE_DARK_THEME_COLORS },
+};
+let desktopThemeState: DesktopLocalThemeState | null = null;
 
-type DesktopLocalThemeSource = "unavailable" | "loading" | "configured";
-let desktopLocalThemeSource: DesktopLocalThemeSource = "unavailable";
-let manualThemeSelectionRevision = 0;
-
-export function getDesktopLocalThemeSource(): DesktopLocalThemeSource {
-  return desktopLocalThemeSource;
+export function getDesktopThemeState(): DesktopLocalThemeState | null {
+  return desktopThemeState;
 }
 
-export function setDesktopLocalThemeSource(source: DesktopLocalThemeSource): void {
-  if (source === desktopLocalThemeSource) return;
-  desktopLocalThemeSource = source;
+export function setDesktopThemeState(state: DesktopLocalThemeState | null): boolean {
+  if (Equal.equals(desktopThemeState, state)) return false;
+  desktopThemeState = state;
   notifyCustomThemeListeners();
+  return true;
 }
 
-export function getManualThemeSelectionRevision(): number {
-  return manualThemeSelectionRevision;
-}
-
-export function recordManualThemeSelection(): void {
-  manualThemeSelectionRevision += 1;
-}
-
-export function getDesktopLocalTheme(): ThemeDefinition | null {
+export function getDesktopLocalTheme(): ThemeDefinition {
   return desktopLocalTheme;
 }
 
-export function setDesktopLocalTheme(theme: ThemeDefinition | null): boolean {
+export function setDesktopLocalTheme(theme: ThemeDefinition): boolean {
   if (Equal.equals(desktopLocalTheme, theme)) return false;
   desktopLocalTheme = theme;
   notifyCustomThemeListeners();

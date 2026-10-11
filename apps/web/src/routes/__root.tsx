@@ -142,6 +142,7 @@ function RootRouteNotFoundView() {
 }
 
 function RootRouteView() {
+  useDesktopLocalThemeSync();
   useEffect(() => installDesktopPasteAsText(window.desktopBridge, window), []);
   const pathname = useLocation({ select: (location) => location.pathname });
   const { authGateState } = Route.useRouteContext();
@@ -281,7 +282,6 @@ function RootRouteView() {
 /** Follows the palette the primary environment's machine publishes, if any. */
 function EnvironmentThemeSync() {
   useEnvironmentThemeSync();
-  useDesktopLocalThemeSync();
   // Ordered after the palette sync so a first-run client adopting the
   // environment's own theme finds it already in the library.
   useDefaultThemeAdoption();
