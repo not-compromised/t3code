@@ -96,10 +96,9 @@ jobs:
         run: |
           tag="${TARGET_TAG:-}"
           if [[ -z "$tag" ]]; then
-            tag="$(gh api "repos/$UPSTREAM_REPO/releases?per_page=30" \
-              --jq '[.[] | select(.draft | not) | select(.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+-nightly\\.[0-9]{8}\\.[0-9]+$"))][0].tag_name')"
+            tag="$(gh api "repos/$UPSTREAM_REPO/releases?per_page=30" | node .github/fork/select-nightly.cjs)"
           fi
-          [[ -n "$tag" && "$tag" != null ]] || { echo "::error::no upstream nightly found"; exit 1; }
+          [[ -n "$tag" ]] || { echo "::error::no upstream nightly found"; exit 1; }
           version="${tag#v}"
           git fetch -q --filter=blob:none upstream "refs/tags/$tag:refs/tags/$tag"
           old_custom="$(git rev-parse origin/custom)"
@@ -118,13 +117,8 @@ jobs:
         env:
           TAG: ${{ steps.plan.outputs.tag }}
         run: |
-          file=packages/contracts/src/environment.ts
-          pattern='ORCHESTRATION_PROTOCOL_VERSION = [0-9]+'
-          old="$(git show "origin/upstream-mirror:$file" | grep -oE "$pattern")"
-          new="$(git show "$TAG:$file" | grep -oE "$pattern")"
-          if [[ "$old" != "$new" ]]; then
+          if ! bash .github/fork/protocol-guard.sh origin/upstream-mirror "$TAG"; then
             echo "HOLD_REASON=protocol" >> "$GITHUB_ENV"
-            echo "::error::Upstream changed the phone/server protocol ($old -> $new). Ship by hand with allow_protocol_change after updating the phone app."
             exit 1
           fi
 
@@ -187,6 +181,8 @@ jobs:
       - run: vp run --filter @t3tools/desktop ensure:electron
       - name: Typecheck
         run: vp run typecheck
+      - name: Fork pipeline tests
+        run: node --test .github/fork/*.test.cjs
       - name: Fork boundary check
         env:
           TAG: ${{ needs.rebase.outputs.tag }}
