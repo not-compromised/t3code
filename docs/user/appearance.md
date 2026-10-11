@@ -94,22 +94,26 @@ view.
 Write updates to a temporary file and rename it into place so clients never read a partial theme.
 Invalid files are not published.
 
-### Follow a desktop-local theme file
+## Desktop colors
 
-Launch the desktop app with `T3CODE_DESKTOP_THEME_FILE` set to the absolute path
-of a palette JSON file to follow a theme generated on your computer. It accepts
-the same exported or seeded format described above. For example on Linux:
+On desktop, select **System theme** in **Settings → Appearance** to match your computer's
+appearance and available accent color. Other surfaces keep T3 Code's standard colors.
+If the desktop does not provide an accent, the standard accent is used. This works with local
+environments disabled and remote server connections. Existing selections stay unchanged until
+you choose System theme.
 
-```sh
-T3CODE_DESKTOP_THEME_FILE="$HOME/.config/t3-theme.json" ./T3-Code.AppImage
-```
+Omarchy's generated T3 Code palette is detected automatically on Linux. When available,
+System theme follows its full palette, including code and terminal colors. No launcher,
+environment variable, or separate theme broker is required.
 
-The desktop applies the palette at startup and follows file changes even when
-its local environment is disabled or it connects to a remote server. Replace
-files atomically. Missing or invalid files leave the last valid palette in
-place; files must be regular files no larger than 32 KiB, not symlinks.
+For custom matching, import or create themes and assign their light and dark previews.
+Choose **System** appearance to switch between them with your desktop. Alternatively, choose
+**Choose theme file** beside System theme to follow JSON exported by T3 Code or produced by
+another theme tool. The selected path and file status are shown in Settings; **Use automatic
+colors** returns to desktop detection. Changing the source does not replace a manually selected
+theme. Select System theme to use it.
 
-Your saved theme preferences and custom themes remain intact. Choosing another
-theme takes precedence until the file's palette changes or the app restarts.
-To stop following the file, remove the launch option and restart the desktop.
-Web and mobile clients are unaffected.
+Replace files atomically. Missing or invalid files retain the last valid palette from that
+source, or use native colors until a valid palette arrives. Files must be regular files no
+larger than 32 KiB; symbolic links to files are not followed. Choosing another theme persists
+through file updates, navigation, and app restarts. Web and mobile clients are unaffected.
