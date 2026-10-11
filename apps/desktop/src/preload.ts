@@ -116,6 +116,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   setLocalEnvironmentEnabled: (enabled) =>
     ipcRenderer.invoke(IpcChannels.SET_LOCAL_ENVIRONMENT_ENABLED_CHANNEL, enabled),
   getLocalTheme: () => ipcRenderer.invoke(IpcChannels.GET_LOCAL_THEME_CHANNEL),
+  setLocalThemeFile: (path) => ipcRenderer.invoke(IpcChannels.SET_LOCAL_THEME_FILE_CHANNEL, path),
+  pickLocalThemeFile: () => ipcRenderer.invoke(IpcChannels.PICK_LOCAL_THEME_FILE_CHANNEL),
   onLocalTheme: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, theme: Parameters<typeof listener>[0]) =>
       listener(theme);
