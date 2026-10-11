@@ -68,16 +68,7 @@ jobs:
       # Upstream's vendored .repos tree holds orphaned gitlinks that break
       # actions/checkout's cleanup, so check out by hand like upstream does.
       - name: Checkout custom
-        env:
-          FORK_DEPLOY_KEY: ${{ secrets.FORK_DEPLOY_KEY }}
         run: |
-          # Pushes go over the fork's deploy key: GITHUB_TOKEN may not push
-          # commits that change workflow files, and upstream's often do.
-          install -d -m 700 ~/.ssh
-          printf '%s\n' "$FORK_DEPLOY_KEY" > ~/.ssh/fork_deploy && chmod 600 ~/.ssh/fork_deploy
-          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
-          export GIT_SSH_COMMAND="ssh -i ~/.ssh/fork_deploy -o IdentitiesOnly=yes"
-          echo "GIT_SSH_COMMAND=$GIT_SSH_COMMAND" >> "$GITHUB_ENV"
           git init -q .
           git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
           git remote set-url --push origin "git@github.com:${GITHUB_REPOSITORY}.git"
@@ -127,6 +118,7 @@ jobs:
         if: steps.plan.outputs.skip == 'false'
         env:
           TAG: ${{ steps.plan.outputs.tag }}
+          FORK_DEPLOY_KEY: ${{ secrets.FORK_DEPLOY_KEY }}
         run: |
           if ! git rebase --onto "$TAG" origin/upstream-mirror custom; then
             git status --short | sed 's/^/conflict: /'
@@ -135,7 +127,15 @@ jobs:
             echo "::error::custom does not replay cleanly onto $TAG"
             exit 1
           fi
-          git push -q --force origin "custom:refs/heads/fork/candidate"
+          # Pushes go over the fork's deploy key (GITHUB_TOKEN may not push
+          # workflow changes, and upstream's often carry some). The key lives
+          # only for this step, which runs no repository code.
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$FORK_DEPLOY_KEY" > ~/.ssh/fork_deploy && chmod 600 ~/.ssh/fork_deploy
+          trap 'rm -f ~/.ssh/fork_deploy' EXIT
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/fork_deploy -o IdentitiesOnly=yes" \
+            git push -q --force origin "custom:refs/heads/fork/candidate"
           echo "candidate=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Record hold reason
@@ -273,13 +273,12 @@ jobs:
         env:
           FORK_DEPLOY_KEY: ${{ secrets.FORK_DEPLOY_KEY }}
         run: |
-          # Pushes go over the fork's deploy key: GITHUB_TOKEN may not push
-          # commits that change workflow files, and upstream's often do.
+          # Same deploy key as the rebase push, alive only for this step.
           install -d -m 700 ~/.ssh
           printf '%s\n' "$FORK_DEPLOY_KEY" > ~/.ssh/fork_deploy && chmod 600 ~/.ssh/fork_deploy
+          trap 'rm -f ~/.ssh/fork_deploy' EXIT
           ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
           export GIT_SSH_COMMAND="ssh -i ~/.ssh/fork_deploy -o IdentitiesOnly=yes"
-          echo "GIT_SSH_COMMAND=$GIT_SSH_COMMAND" >> "$GITHUB_ENV"
           git init -q .
           git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
           git remote set-url --push origin "git@github.com:${GITHUB_REPOSITORY}.git"

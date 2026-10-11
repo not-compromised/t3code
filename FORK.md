@@ -136,7 +136,8 @@ otherwise.
   - The boundary check runs on every pull request and nightly and refuses the
     refused zone except listed exceptions.
   - Upstream's own workflows stay disabled.
-  - The push key and write access stay out of jobs that run repository code,
+  - The push key lives only in the two push steps, which run no repository
+    code; write access stays out of jobs that run repository code,
     and `custom` is replaced only under a lease on the tip that was rebased.
 - **Tests:** `node --test .github/fork/*.test.cjs` (Check job), one test per
   promise above that can be checked without running Actions.

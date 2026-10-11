@@ -179,6 +179,20 @@ test("the push key never reaches jobs that run repository code", () => {
   assert.match(workflow, /^permissions:\n {2}contents: read\n/m);
 });
 
+test("the push key lives only in the two push steps, which run no repository code", () => {
+  const steps = workflow.split(/\n {6}- /).slice(1);
+  const holding = steps.filter((step) => step.includes("FORK_DEPLOY_KEY"));
+  assert.deepEqual(
+    holding.map((step) => step.match(/name: (.+)/)[1]),
+    ["Rebase", "Move branches"],
+  );
+  for (const step of holding) {
+    assert.doesNotMatch(step, /\.github\/fork|\bnode |\bvp |\bbash \S/, "a key-holding step runs repository code");
+    assert.doesNotMatch(step, /GIT_SSH_COMMAND[^\n]*GITHUB_ENV/, "the key's ssh command must not outlive its step");
+    assert.match(step, /trap 'rm -f ~\/\.ssh\/fork_deploy' EXIT/);
+  }
+});
+
 test("custom is only ever replaced under a lease on the tip that was rebased", () => {
   const publish = job("publish");
   assert.match(publish, /--force-with-lease="custom:\$OLD_CUSTOM"/);
