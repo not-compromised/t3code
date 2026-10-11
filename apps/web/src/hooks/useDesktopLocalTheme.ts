@@ -1,12 +1,6 @@
 import type { DesktopLocalThemeState } from "@t3tools/contracts";
 import { useEffect } from "react";
-import {
-  DESKTOP_LOCAL_THEME_ID,
-  setDesktopLocalTheme,
-  setDesktopLocalThemeSource,
-  getManualThemeSelectionRevision,
-} from "../themePalette";
-import { environmentThemeDefinition } from "../publishedTheme";
+import { applyDesktopThemeState } from "../desktopTheme";
 import { useTheme } from "./useTheme";
 
 export function useDesktopLocalThemeSync(): void {
@@ -14,39 +8,26 @@ export function useDesktopLocalThemeSync(): void {
   useEffect(() => {
     const bridge = window.desktopBridge;
     if (!bridge?.getLocalTheme || !bridge.onLocalTheme) return;
-    setDesktopLocalThemeSource("loading");
-    const startupSelection = getManualThemeSelectionRevision();
     let active = true;
     let eventReceived = false;
     const apply = (state: DesktopLocalThemeState) => {
-      if (!active) return;
-      setDesktopLocalThemeSource(state.enabled ? "configured" : "unavailable");
-      const theme = state.theme;
-      const definition =
-        theme === null
-          ? null
-          : environmentThemeDefinition({ ...theme, id: DESKTOP_LOCAL_THEME_ID });
-      if (setDesktopLocalTheme(definition)) refreshTheme({ preservePreview: true });
+      if (active && applyDesktopThemeState(state)) refreshTheme({ preservePreview: true });
     };
-    const unsubscribe = bridge.onLocalTheme((theme) => {
+    const unsubscribe = bridge.onLocalTheme((state) => {
       eventReceived = true;
-      apply(theme);
+      apply(state);
     });
     void bridge
       .getLocalTheme()
-      .then((theme) => {
-        if (!active || eventReceived) return;
-        if (startupSelection === getManualThemeSelectionRevision()) apply(theme);
-        else setDesktopLocalThemeSource(theme.enabled ? "configured" : "unavailable");
+      .then((state) => {
+        if (!eventReceived) apply(state);
       })
       .catch(() => {
-        if (active && !eventReceived) setDesktopLocalThemeSource("unavailable");
+        // Older or unavailable desktop bridges leave the saved palette intact.
       });
     return () => {
       active = false;
       unsubscribe();
-      setDesktopLocalThemeSource("unavailable");
-      if (setDesktopLocalTheme(null)) refreshTheme({ preservePreview: true });
     };
   }, [refreshTheme]);
 }
