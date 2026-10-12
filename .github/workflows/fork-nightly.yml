@@ -8,7 +8,9 @@ on:
   schedule:
     # Finishes before the owner's 08:30 UTC digest scan, which reports a fork
     # still behind upstream; servers install the release within 30 minutes.
-    - cron: "30 7 * * *"
+    # GitHub drops a public repo's schedules after 60 days without activity
+    # and revives them only when a person commits a change to this line.
+    - cron: "35 7 * * *"
   workflow_dispatch:
     inputs:
       target_tag:
