@@ -193,6 +193,16 @@ minimumReleaseAgeExclude:
   - "@muse-code/sdk@1.4.6"
 
 overrides:
+  # Security floors preserve newer resolutions; legacy consumers keep their APIs.
+  "proxy-addr@<2.0.8": 2.0.8
+  "seroval@<1.6.3": 1.6.3
+  "shell-quote@<1.11.0": 1.11.0
+  "sharp@<0.35.5": 0.35.5
+  "source-map-js@<1.2.2": 1.2.2
+  "smol-toml@<1.9.0": 1.9.0
+  "valibot@<1.4.2": 1.4.2
+  "dbus-next>xml2js": 0.6.0
+  "xcode>uuid": 11.1.1
   # Keep jsdom's optional peer consistent so Vite+ has one test-runner instance.
   "@exodus/bytes>@noble/hashes": "1.8.0"
   # Earlier React Navigation declarations create a circular type alias in TypeScript 7.
