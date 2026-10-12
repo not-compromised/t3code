@@ -122,7 +122,8 @@ otherwise.
 
 ### Fork pipeline
 
-- **Commits:** `chore(fork): nightly rolling rebase and release pipeline`
+- **Commits:** `chore(fork): nightly rolling rebase and release pipeline`,
+  `fix(fork): revive the nightly schedule GitHub dropped`
 - **Must still be true:**
   - Daily at 07:35 UTC and on demand, the newest upstream nightly gets
     `custom` replayed onto it, checked and built; it ships only when every
@@ -141,7 +142,8 @@ otherwise.
     and `custom` is replaced only under a lease on the tip that was rebased.
 - **Tests:** `node --test .github/fork/*.test.cjs` (Check job), one test per
   promise above that can be checked without running Actions.
-- **Detail:** this file and `.github/workflows/fork-nightly.yml`.
+- **Detail:** this file and `.github/workflows/fork-nightly.yml`;
+  not-compromised/t3code#6 (nightly schedule revival).
 - **Retire when:** never.
 
 ## Verification
