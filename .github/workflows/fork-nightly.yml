@@ -68,16 +68,7 @@ jobs:
       # Upstream's vendored .repos tree holds orphaned gitlinks that break
       # actions/checkout's cleanup, so check out by hand like upstream does.
       - name: Checkout custom
-        env:
-          FORK_DEPLOY_KEY: ${{ secrets.FORK_DEPLOY_KEY }}
         run: |
-          # Pushes go over the fork's deploy key: GITHUB_TOKEN may not push
-          # commits that change workflow files, and upstream's often do.
-          install -d -m 700 ~/.ssh
-          printf '%s\n' "$FORK_DEPLOY_KEY" > ~/.ssh/fork_deploy && chmod 600 ~/.ssh/fork_deploy
-          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
-          export GIT_SSH_COMMAND="ssh -i ~/.ssh/fork_deploy -o IdentitiesOnly=yes"
-          echo "GIT_SSH_COMMAND=$GIT_SSH_COMMAND" >> "$GITHUB_ENV"
           git init -q .
           git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
           git remote set-url --push origin "git@github.com:${GITHUB_REPOSITORY}.git"
@@ -96,10 +87,9 @@ jobs:
         run: |
           tag="${TARGET_TAG:-}"
           if [[ -z "$tag" ]]; then
-            tag="$(gh api "repos/$UPSTREAM_REPO/releases?per_page=30" \
-              --jq '[.[] | select(.draft | not) | select(.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+-nightly\\.[0-9]{8}\\.[0-9]+$"))][0].tag_name')"
+            tag="$(gh api "repos/$UPSTREAM_REPO/releases?per_page=30" | node .github/fork/select-nightly.cjs)"
           fi
-          [[ -n "$tag" && "$tag" != null ]] || { echo "::error::no upstream nightly found"; exit 1; }
+          [[ -n "$tag" ]] || { echo "::error::no upstream nightly found"; exit 1; }
           version="${tag#v}"
           git fetch -q --filter=blob:none upstream "refs/tags/$tag:refs/tags/$tag"
           old_custom="$(git rev-parse origin/custom)"
@@ -118,13 +108,8 @@ jobs:
         env:
           TAG: ${{ steps.plan.outputs.tag }}
         run: |
-          file=packages/contracts/src/environment.ts
-          pattern='ORCHESTRATION_PROTOCOL_VERSION = [0-9]+'
-          old="$(git show "origin/upstream-mirror:$file" | grep -oE "$pattern")"
-          new="$(git show "$TAG:$file" | grep -oE "$pattern")"
-          if [[ "$old" != "$new" ]]; then
+          if ! bash .github/fork/protocol-guard.sh origin/upstream-mirror "$TAG"; then
             echo "HOLD_REASON=protocol" >> "$GITHUB_ENV"
-            echo "::error::Upstream changed the phone/server protocol ($old -> $new). Ship by hand with allow_protocol_change after updating the phone app."
             exit 1
           fi
 
@@ -133,6 +118,7 @@ jobs:
         if: steps.plan.outputs.skip == 'false'
         env:
           TAG: ${{ steps.plan.outputs.tag }}
+          FORK_DEPLOY_KEY: ${{ secrets.FORK_DEPLOY_KEY }}
         run: |
           if ! git rebase --onto "$TAG" origin/upstream-mirror custom; then
             git status --short | sed 's/^/conflict: /'
@@ -141,7 +127,15 @@ jobs:
             echo "::error::custom does not replay cleanly onto $TAG"
             exit 1
           fi
-          git push -q --force origin "custom:refs/heads/fork/candidate"
+          # Pushes go over the fork's deploy key (GITHUB_TOKEN may not push
+          # workflow changes, and upstream's often carry some). The key lives
+          # only for this step, which runs no repository code.
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$FORK_DEPLOY_KEY" > ~/.ssh/fork_deploy && chmod 600 ~/.ssh/fork_deploy
+          trap 'rm -f ~/.ssh/fork_deploy' EXIT
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/fork_deploy -o IdentitiesOnly=yes" \
+            git push -q --force origin "custom:refs/heads/fork/candidate"
           echo "candidate=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Record hold reason
@@ -187,6 +181,8 @@ jobs:
       - run: vp run --filter @t3tools/desktop ensure:electron
       - name: Typecheck
         run: vp run typecheck
+      - name: Fork pipeline tests
+        run: node --test .github/fork/*.test.cjs
       - name: Fork boundary check
         env:
           TAG: ${{ needs.rebase.outputs.tag }}
@@ -277,13 +273,12 @@ jobs:
         env:
           FORK_DEPLOY_KEY: ${{ secrets.FORK_DEPLOY_KEY }}
         run: |
-          # Pushes go over the fork's deploy key: GITHUB_TOKEN may not push
-          # commits that change workflow files, and upstream's often do.
+          # Same deploy key as the rebase push, alive only for this step.
           install -d -m 700 ~/.ssh
           printf '%s\n' "$FORK_DEPLOY_KEY" > ~/.ssh/fork_deploy && chmod 600 ~/.ssh/fork_deploy
+          trap 'rm -f ~/.ssh/fork_deploy' EXIT
           ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
           export GIT_SSH_COMMAND="ssh -i ~/.ssh/fork_deploy -o IdentitiesOnly=yes"
-          echo "GIT_SSH_COMMAND=$GIT_SSH_COMMAND" >> "$GITHUB_ENV"
           git init -q .
           git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
           git remote set-url --push origin "git@github.com:${GITHUB_REPOSITORY}.git"
