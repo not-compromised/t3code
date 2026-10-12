@@ -136,6 +136,11 @@ otherwise.
   - The boundary check runs on every pull request and nightly and refuses the
     refused zone except listed exceptions.
   - Upstream's own workflows stay disabled.
+  - The push key lives only in the two push steps, which run no repository
+    code; write access stays out of jobs that run repository code,
+    and `custom` is replaced only under a lease on the tip that was rebased.
+- **Tests:** `node --test .github/fork/*.test.cjs` (Check job), one test per
+  promise above that can be checked without running Actions.
 - **Detail:** this file and `.github/workflows/fork-nightly.yml`.
 - **Retire when:** never.
 
@@ -143,8 +148,9 @@ otherwise.
 
 A run is good when the release exists with `T3-Code-*.AppImage` and
 `nightly-linux.yml`, and an installed fork build finds it through
-Settings → Updates. Before moving `custom` by hand, run the boundary
-check against `upstream-mirror` and the client-side tests from the workflow.
+Settings → Updates. Before moving `custom` by hand, run
+`node --test .github/fork/*.test.cjs`, the boundary check against
+`upstream-mirror`, and the client-side tests from the workflow.
 
 ## Rollback
 
