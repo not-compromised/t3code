@@ -146,6 +146,25 @@ otherwise.
   not-compromised/t3code#6 (nightly schedule revival).
 - **Retire when:** never.
 
+### Dependency security fixes
+
+- **Commits:** `fix(fork): update dependencies with released security fixes`
+- **Must still be true:**
+  - The workspace lockfile resolves the dependencies named in #8 to releases
+    that fix the reported advisories.
+  - Security overrides use compatible minimum-version ranges, allowing newer
+    patch/minor releases within the chosen compatibility line. Remove them
+    when upstream raises its dependency requirements to fixed versions.
+  - The desktop build, markdown rendering, D-Bus integration and bundled
+    provider SDK consumers remain compatible. Navigation keeps query-string
+    7's namespace API while its decoder resolves to a fixed ESM release.
+- **Boundary exception:** the owner's dependency-update request permits
+  security overrides in `pnpm-workspace.yaml` and regenerated `pnpm-lock.yaml`.
+  Stock npm servers and the TestFlight app still receive dependencies from
+  upstream; this fork update changes their bundled fork counterparts only.
+- **Detail:** not-compromised/t3code#8, not-compromised/t3code#10.
+- **Retire when:** upstream's dependency requirements exclude the vulnerable versions.
+
 ## Verification
 
 A run is good when the release exists with `T3-Code-*.AppImage` and
