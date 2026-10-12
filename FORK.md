@@ -32,7 +32,7 @@ nightly.
 
 ## Nightly pipeline
 
-`.github/workflows/fork-nightly.yml` runs daily at 07:30 UTC and on demand.
+`.github/workflows/fork-nightly.yml` runs daily at 07:35 UTC and on demand.
 
 1. It picks the newest upstream nightly release tag.
 2. It refuses to ship by itself if `ORCHESTRATION_PROTOCOL_VERSION` changed,
@@ -124,7 +124,7 @@ otherwise.
 
 - **Commits:** `chore(fork): nightly rolling rebase and release pipeline`
 - **Must still be true:**
-  - Daily at 07:30 UTC and on demand, the newest upstream nightly gets
+  - Daily at 07:35 UTC and on demand, the newest upstream nightly gets
     `custom` replayed onto it, checked and built; it ships only when every
     step is green.
   - A changed `ORCHESTRATION_PROTOCOL_VERSION` never ships without
