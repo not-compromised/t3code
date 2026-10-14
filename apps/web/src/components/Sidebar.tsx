@@ -2599,6 +2599,16 @@ export default function Sidebar() {
     () => new Map(projects.map((project) => [`${project.environmentId}:${project.id}`, project])),
     [projects],
   );
+  // Menu and gesture callbacks read these through refs. Every closure from one
+  // render shares that render's scope, so a callback memoized on server configs
+  // and another memoized on projects would each keep alive the render that last
+  // rebuilt the other, chaining every past render and its configs in memory.
+  const serverConfigsRef = useRef(serverConfigs);
+  serverConfigsRef.current = serverConfigs;
+  const projectsRef = useRef(projects);
+  projectsRef.current = projects;
+  const projectByKeyRef = useRef(projectByKey);
+  projectByKeyRef.current = projectByKey;
   const projectDisplayNameByKey = useMemo(
     () =>
       new Map(
@@ -2783,13 +2793,13 @@ export default function Sidebar() {
           projectKey: getSidebarProjectSettingsKey(
             projectGroup,
             projectGroupingSettings,
-            projects,
+            projectsRef.current,
             projectRef,
           ),
         },
       });
     },
-    [isMobile, projectGroupingSettings, projects, router, setOpenMobile],
+    [isMobile, projectGroupingSettings, router, setOpenMobile],
   );
   // Anchor for the scope popup: the header search field, not its icon trigger.
   const headerSearchRef = useRef<HTMLDivElement | null>(null);
@@ -3634,7 +3644,7 @@ export default function Sidebar() {
       const canApply = (key: string) => {
         const thread = threadByKeyRef.current.get(key);
         const capabilities =
-          thread && serverConfigs.get(thread.environmentId)?.environment.capabilities;
+          thread && serverConfigsRef.current.get(thread.environmentId)?.environment.capabilities;
         return (
           thread !== undefined &&
           sectionByThreadKeyRef.current.get(key) === originSection &&
@@ -3686,7 +3696,7 @@ export default function Sidebar() {
         onAbort: () => {},
       });
     },
-    [attemptUnsettle, attemptUnsnooze, serverConfigs, settleThreads],
+    [attemptUnsettle, attemptUnsnooze, settleThreads],
   );
   const pinnedKeys = useMemo(
     () =>
@@ -4309,6 +4319,7 @@ export default function Sidebar() {
     async (position: { x: number; y: number }) => {
       const api = readLocalApi();
       if (!api) return;
+      const configs = serverConfigsRef.current;
       // One exact actionable set: keys whose rows are actually rendered
       // right now. Selections can outlive their rows (settled-tail paging,
       // thread deletion elsewhere) and the menu labels must count only what
@@ -4331,13 +4342,13 @@ export default function Sidebar() {
       );
       const canSnoozeSelection = selectedThreads.every(
         (thread) =>
-          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true &&
+          configs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true &&
           canSnooze(thread, { now: selectionNow.toISOString() }),
       );
       const titleRegenerationThreads = selectedThreads.filter(
         (thread) =>
-          serverConfigs.get(thread.environmentId)?.environment.capabilities
-            .threadTitleRegeneration === true,
+          configs.get(thread.environmentId)?.environment.capabilities.threadTitleRegeneration ===
+          true,
       );
       const regeneratableTitleThreads = titleRegenerationThreads.filter(
         (thread) => thread.titleRegeneration == null,
@@ -4351,8 +4362,8 @@ export default function Sidebar() {
       // is omitted entirely when nothing selected is pinned.
       const pinnedSelectedThreads = selectedThreads.filter(
         (thread) =>
-          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadPinning ===
-            true && thread.pinnedAt != null,
+          configs.get(thread.environmentId)?.environment.capabilities.threadPinning === true &&
+          thread.pinnedAt != null,
       );
       const unpinMenuItem = buildBulkUnpinContextMenuItem({
         pinnedCount: pinnedSelectedThreads.length,
@@ -4573,7 +4584,6 @@ export default function Sidebar() {
       markThreadUnread,
       performSnooze,
       removeFromSelection,
-      serverConfigs,
       settleThreads,
       updateThreadMetadata,
       timestampFormat,
@@ -4594,7 +4604,8 @@ export default function Sidebar() {
         );
         const workspacePath =
           session.worktreePath ??
-          projectByKey.get(`${session.environmentId}:${session.projectId}`)?.workspaceRoot;
+          projectByKeyRef.current.get(`${session.environmentId}:${session.projectId}`)
+            ?.workspaceRoot;
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildDraftActionMenuItems({
@@ -4630,7 +4641,7 @@ export default function Sidebar() {
         }
       })();
     },
-    [copyBranchToClipboard, copyPathToClipboard, openProjectSettings, projectByKey],
+    [copyBranchToClipboard, copyPathToClipboard, openProjectSettings],
   );
 
   const handleThreadContextMenu = useCallback(
@@ -4646,26 +4657,27 @@ export default function Sidebar() {
         }
         const thread = threadByKeyRef.current.get(threadKey);
         if (!thread) return;
+        const configs = serverConfigsRef.current;
         const threadWorkspacePath =
           thread.worktreePath ??
-          projectByKey.get(`${thread.environmentId}:${thread.projectId}`)?.workspaceRoot ??
+          projectByKeyRef.current.get(`${thread.environmentId}:${thread.projectId}`)
+            ?.workspaceRoot ??
           null;
         // Un-settle pins the thread active until real activity clears the pin.
         // Environments without
         // the settlement capability get no lifecycle items at all.
         const supportsSettlement =
-          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSettlement ===
-          true;
+          configs.get(thread.environmentId)?.environment.capabilities.threadSettlement === true;
         const supportsSnooze =
-          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true;
+          configs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true;
         const supportsPinning =
-          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadPinning === true;
+          configs.get(thread.environmentId)?.environment.capabilities.threadPinning === true;
         const supportsAutoSettleOptOut =
-          serverConfigs.get(thread.environmentId)?.environment.capabilities
-            .threadAutoSettleOptOut === true;
+          configs.get(thread.environmentId)?.environment.capabilities.threadAutoSettleOptOut ===
+          true;
         const supportsTitleRegeneration =
-          serverConfigs.get(thread.environmentId)?.environment.capabilities
-            .threadTitleRegeneration === true;
+          configs.get(thread.environmentId)?.environment.capabilities.threadTitleRegeneration ===
+          true;
         const isRegeneratingTitle = thread.titleRegeneration != null;
         const isSettled = settledThreadKeysRef.current.has(threadKey);
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
@@ -4921,8 +4933,6 @@ export default function Sidebar() {
       markThreadUnread,
       openProjectSettings,
       projectScopeKey,
-      projectByKey,
-      serverConfigs,
       setProjectScopeKey,
       setThreadAutoSettle,
       startThreadRename,

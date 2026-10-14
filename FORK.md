@@ -168,6 +168,22 @@ otherwise.
 - **Detail:** not-compromised/t3code#8, not-compromised/t3code#10.
 - **Retire when:** upstream's dependency requirements exclude the vulnerable versions.
 
+### Sidebar render leak
+
+- **Commits:** `fix(web): stop the sidebar keeping every past render alive`
+- **Must still be true:**
+  - With agents running, the desktop window's Sidebar keeps a constant
+    handful of render scopes alive, not one per render. Renderer memory
+    stops growing from Sidebar re-renders and doesn't climb toward the V8
+    heap limit.
+  - The thread, draft and multi-select context menus, the project settings
+    shortcut and the row action sweep act on the capabilities and projects
+    current when they run.
+- **Detail:** not-compromised/t3code#14; upstream crash report
+  pingdotgg/t3code#17295.
+- **Retire when:** upstream ships an equivalent fix to
+  `apps/web/src/components/Sidebar.tsx`.
+
 ## Verification
 
 A run is good when the release exists with `T3-Code-*.AppImage` and
