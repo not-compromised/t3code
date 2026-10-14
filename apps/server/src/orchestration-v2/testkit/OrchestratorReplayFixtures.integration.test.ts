@@ -8,6 +8,9 @@ import type {
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
+
+import * as Orchestrator from "../Orchestrator.ts";
 
 import { ClaudeOrchestratorReplayHarness } from "../Adapters/ClaudeAdapterV2.testkit.ts";
 import { CodexOrchestratorReplayHarness } from "../Adapters/CodexAdapterV2.testkit.ts";
@@ -129,11 +132,38 @@ const runFixtureProvider = Effect.fn("runOrchestratorReplayFixture")(function* <
     },
   };
 
-  const result = yield* runOrchestratorV2ProviderReplayScenario(
-    scenario,
-    input.harness,
-    input.driver.runContinuationWorker === true ? { runContinuationWorker: true } : {},
-  ).pipe(provideDeterministicTestRuntime);
+  const result = yield* runOrchestratorV2ProviderReplayScenario(scenario, input.harness, {
+    ...(input.driver.runContinuationWorker === true ? { runContinuationWorker: true } : {}),
+    ...(input.fixtureName !== "opencode2_nested_background"
+      ? {}
+      : {
+          afterSteps: Effect.gen(function* () {
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            const threadId = materialized.projectionThreadIds[0]!;
+            const root = yield* orchestrator.getThreadProjection(threadId);
+            const childThreadId = root.subagents[0]?.childThreadId;
+            if (childThreadId == null) return yield* Effect.die("Missing nested subagent thread");
+            const afterSequence = yield* orchestrator.getThreadEventSequence(childThreadId);
+            const child = yield* orchestrator.getThreadProjection(childThreadId);
+            if (
+              child.providerTurns.some((turn) => turn.ordinal === 2 && turn.status === "completed")
+            )
+              return;
+            yield* orchestrator
+              .streamStoredEventsFrom({ threadId: childThreadId, afterSequence })
+              .pipe(
+                Stream.filter(
+                  (stored) =>
+                    stored.event.type === "provider-turn.updated" &&
+                    stored.event.payload.ordinal === 2 &&
+                    stored.event.payload.status === "completed",
+                ),
+                Stream.take(1),
+                Stream.runDrain,
+              );
+          }),
+        }),
+  }).pipe(provideDeterministicTestRuntime);
   input.driver.assertOutput(result, transcript);
   assertProviderNativeSubagentRootTurns(result);
   const expectedAbsentWorkspacePaths = input.driver.expectedAbsentWorkspacePaths;

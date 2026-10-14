@@ -185,6 +185,11 @@ export function runOrchestratorV2ProviderReplayScenario<
   scenario: OrchestratorV2ProviderReplayScenario<Transcript>,
   harness: OrchestratorV2ProviderReplayHarness<Transcript, Error>,
   options: {
+    readonly afterSteps?: Effect.Effect<
+      void,
+      Orchestrator.OrchestratorV2Error,
+      Orchestrator.OrchestratorV2
+    >;
     readonly databaseLayer?: Layer.Layer<
       SqlClient.SqlClient,
       MigrationError | PlatformError.PlatformError | SqlError
@@ -220,7 +225,10 @@ export function runOrchestratorV2ProviderReplayScenario<
     replayGate,
   });
 
-  return runOrchestratorV2Scenario(scenario, { replayGate }).pipe(Effect.provide(layer));
+  return runOrchestratorV2Scenario(scenario, {
+    replayGate,
+    ...(options.afterSteps === undefined ? {} : { afterSteps: options.afterSteps }),
+  }).pipe(Effect.provide(layer));
 }
 
 export function layerProviderReplay<Transcript extends ProviderReplayTranscript, Error>(

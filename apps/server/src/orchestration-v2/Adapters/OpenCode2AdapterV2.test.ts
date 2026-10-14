@@ -1614,6 +1614,95 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect(
+    "clears every ancestor's pending snapshot after reconnecting with a deeply queued report",
+    () =>
+      Effect.gen(function* () {
+        const LEAF = "ses_leaf000000000000000000000";
+        const { runtime, thread } = yield* resumed([
+          ...nestedLaunch.slice(0, -3),
+          event("session.tool.input.started", { ...toolOf(DEEP, "call-leaf"), name: "subagent" }),
+          event("session.tool.called", {
+            ...toolOf(DEEP, "call-leaf"),
+            name: "subagent",
+            input: { description: "Leaf", prompt: "sleep", background: true },
+            executed: false,
+          }),
+          event("session.created", { ...childCreated(LEAF), parentID: DEEP, title: "Leaf" }),
+          event("session.tool.progress", {
+            ...toolOf(DEEP, "call-leaf"),
+            metadata: { sessionID: LEAF, status: "running" },
+          }),
+          event("session.tool.success", {
+            ...toolOf(DEEP, "call-leaf"),
+            content: [{ type: "text", text: "The subagent is working in the background." }],
+            metadata: { sessionID: LEAF, status: "running", truncated: false },
+            executed: false,
+          }),
+          event("session.execution.started", { sessionID: LEAF }),
+          event("session.execution.succeeded", { sessionID: DEEP }),
+          ...nestedLaunch.slice(-3),
+          event("session.execution.succeeded", { sessionID: LEAF }),
+          event("session.inbox.enqueued", {
+            inboxID: "msg_leaf_report",
+            sessionID: DEEP,
+            item: {
+              type: "synthetic",
+              payload: {
+                text: `<subagent sessionID="${LEAF}" state="completed" description="Leaf">\nLEAF_OK\n</subagent>`,
+                description: "Leaf",
+                metadata: {
+                  source: "subagent",
+                  childID: LEAF,
+                  agent: "General",
+                  state: "completed",
+                },
+              },
+              delivery: "steer",
+            },
+          }),
+          { type: "runtime_exit", status: "success" } as const,
+          out("event.subscribe"),
+          out("session.active"),
+          replyData("session.active", {}),
+        ]);
+        const pendingSnapshots = new Map<string, boolean>();
+        const recovered = yield* Deferred.make<void>();
+        let leafCompleted = false;
+        yield* runtime.events.pipe(
+          Stream.runForEach((event) => {
+            if (
+              event.type === "subagent.updated" &&
+              event.subagent.title === "Leaf" &&
+              event.subagent.status === "completed"
+            )
+              leafCompleted = true;
+            if (
+              event.type !== "provider_thread.updated" ||
+              event.pendingBackgroundWork === undefined
+            )
+              return Effect.void;
+            const nativeId = event.providerThread.nativeThreadRef?.nativeId;
+            if (nativeId != null) pendingSnapshots.set(nativeId, event.pendingBackgroundWork);
+            return leafCompleted && nativeId === SESSION && !event.pendingBackgroundWork
+              ? Deferred.succeed(recovered, undefined)
+              : Effect.void;
+          }),
+          Effect.forkScoped,
+        );
+        yield* runtime.startTurn(withLineage(thread));
+        yield* Deferred.await(recovered);
+        assert.deepEqual(Object.fromEntries(pendingSnapshots), {
+          [SESSION]: false,
+          [MIDDLE]: false,
+          [DEEP]: false,
+          [LEAF]: false,
+        });
+        assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+        assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+      }).pipe(Effect.scoped),
+  );
+
   /** A prompt accepted, then a Stop the server never answers, advanced past its timeout. */
   const stopTimedOut: ReadonlyArray<ProviderReplayEntry> = [
     out("session.prompt", { sessionID: SESSION, text: "<any>" }),

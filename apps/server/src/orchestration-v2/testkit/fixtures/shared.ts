@@ -530,6 +530,7 @@ export function materializeFixtureInput(input: {
     let messageIndex = 0;
     let runIndex = 0;
     const activeRunDispatchKeys = new Set<string>();
+    let queuedRunNeedsIdleBarrier = false;
 
     const runIdFor = (runOrdinal: number) =>
       idAllocator.derive.run({ threadId: ids.threadId, ordinal: runOrdinal });
@@ -631,6 +632,12 @@ export function materializeFixtureInput(input: {
           }
           break;
         case "queue_message": {
+          const activeDispatchKey = Array.from(activeRunDispatchKeys).at(-1);
+          if (activeDispatchKey !== undefined) {
+            steps.push({ type: "await", key: activeDispatchKey });
+            activeRunDispatchKeys.delete(activeDispatchKey);
+            queuedRunNeedsIdleBarrier = true;
+          }
           messageIndex += 1;
           runIndex += 1;
           const nextStep = input.fixtureInput.steps[stepIndex + 1];
@@ -657,11 +664,8 @@ export function materializeFixtureInput(input: {
             nextStep?.type === "queue_message" ||
             (nextStep?.type === "cancel_queued_run" && nextStep.targetRunIndex === runIndex);
           if (!shouldSkipQueueBarrier) {
-            const queueBarrierKey =
-              Array.from(activeRunDispatchKeys).at(-1) ?? `run:${runIndex - 1}`;
-            activeRunDispatchKeys.delete(queueBarrierKey);
-            steps.push({ type: "await", key: queueBarrierKey });
             steps.push({ type: "await_thread_idle", threadId: ids.threadId });
+            queuedRunNeedsIdleBarrier = false;
           }
           break;
         }
@@ -931,7 +935,7 @@ export function materializeFixtureInput(input: {
       }
     }
 
-    if (activeRunDispatchKeys.size > 0) {
+    if (activeRunDispatchKeys.size > 0 || queuedRunNeedsIdleBarrier) {
       steps.push({ type: "await_all" });
       steps.push({ type: "await_thread_idle", threadId: ids.threadId });
     }

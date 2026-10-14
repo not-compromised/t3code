@@ -257,7 +257,11 @@ export function runOrchestratorV2Scenario(
   options: {
     readonly replayGate?: ProviderReplayGate;
     /** Runs after the steps, while the provider session is still open. */
-    readonly afterSteps?: Effect.Effect<void>;
+    readonly afterSteps?: Effect.Effect<
+      void,
+      Orchestrator.OrchestratorV2Error,
+      Orchestrator.OrchestratorV2
+    >;
   } = {},
 ): Effect.Effect<
   OrchestratorV2ScenarioResult,
