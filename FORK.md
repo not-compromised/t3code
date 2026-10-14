@@ -92,9 +92,7 @@ otherwise.
 
 ### Local desktop theme
 
-- **Commits:** `feat(desktop): follow a local palette file independently of servers`,
-  `fix(desktop): preserve local theme ownership during startup`,
-  `feat(desktop): match system colors and configure local palettes`
+- **Commits:** `feat(desktop): follow system colors or a local palette file`
 - **Must still be true:**
   - Choosing **System theme** in Settings → Appearance makes the desktop app
     follow the computer's light/dark appearance and accent, with local
@@ -113,10 +111,16 @@ otherwise.
     Changing the source never replaces it.
   - Web and mobile clients and the stock servers see no change; nothing the
     desktop app sends a server changes.
-- **Boundary exception:** `apps/server/src/environmentTheme.ts` only moves its
-  guarded file reader into `packages/shared/src/themeFile.ts` and re-exports
-  it, with no behaviour change.
+- **Rebase footprint:** every nightly replays this commit, so it edits
+  upstream files only where it must hook in. The desktop keeps its own copy
+  of the server's guarded theme-file reader (`apps/desktop/src/theme/themeFile.ts`)
+  and declares the two culori calls it uses (`culori.d.ts`), leaving
+  `apps/server`, `packages/shared/package.json` and the lockfile's
+  `@types/culori` entry stock: upstream appends to the shared exports and
+  bumps the dependency next to that entry about weekly, and replayed against
+  the 90 days to 2026-10-14 those edits would have held 14 and 12 nightlies.
 - **Detail:** pingdotgg/t3code#17883 (pushed before fork PRs were required);
+  slimmed to one commit in not-compromised/t3code#18 (2026-10-14);
   user guide in `docs/user/appearance.md`, Desktop colors.
 - **Retire when:** upstream merges pingdotgg/t3code#17883.
 
