@@ -123,11 +123,13 @@ otherwise.
 ### Fork pipeline
 
 - **Commits:** `chore(fork): nightly rolling rebase and release pipeline`,
-  `fix(fork): revive the nightly schedule GitHub dropped`
+  `fix(fork): revive the nightly schedule GitHub dropped`,
+  `chore(fork): dispatch the nightly from the owner's server`
 - **Must still be true:**
-  - Daily at 07:35 UTC and on demand, the newest upstream nightly gets
-    `custom` replayed onto it, checked and built; it ships only when every
-    step is green.
+  - On each dispatch, the newest upstream nightly gets `custom` replayed onto
+    it, checked and built; it ships only when every step is green. GitHub
+    never starts it on a schedule: the owner's server dispatches it once a
+    night, or by day after the owner approves.
   - A changed `ORCHESTRATION_PROTOCOL_VERSION` never ships without
     `allow_protocol_change`.
   - A release carries the upstream version unchanged, and fork builds update
@@ -143,7 +145,8 @@ otherwise.
 - **Tests:** `node --test .github/fork/*.test.cjs` (Check job), one test per
   promise above that can be checked without running Actions.
 - **Detail:** this file and `.github/workflows/fork-nightly.yml`;
-  not-compromised/t3code#6 (nightly schedule revival).
+  not-compromised/t3code#6 (nightly schedule revival),
+  not-compromised/t3code#12 (dispatch from the owner's server).
 - **Retire when:** never.
 
 ### Dependency security fixes
