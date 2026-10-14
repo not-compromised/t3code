@@ -537,7 +537,7 @@ it.effect(
           .pipe(Effect.forkChild({ startImmediately: true }));
 
         yield* Deferred.await(repositoryStarted);
-        yield* Effect.yieldNow;
+        yield* Fiber.await(createFiber);
         assert.isDefined(createFiber.pollUnsafe());
 
         const created = yield* Fiber.join(createFiber);
@@ -556,7 +556,7 @@ it.effect(
         const immediateReadFiber = yield* service
           .getById(projectId)
           .pipe(Effect.forkChild({ startImmediately: true }));
-        yield* Effect.yieldNow;
+        yield* Fiber.await(immediateReadFiber);
         assert.isDefined(immediateReadFiber.pollUnsafe());
         const immediateRead = Option.getOrThrow(yield* Fiber.join(immediateReadFiber));
         assert.isNull(immediateRead.repositoryIdentity);
@@ -565,7 +565,7 @@ it.effect(
         const snapshotFiber = yield* service.snapshot.pipe(
           Effect.forkChild({ startImmediately: true }),
         );
-        yield* Effect.yieldNow;
+        yield* Fiber.await(snapshotFiber);
         assert.isDefined(snapshotFiber.pollUnsafe());
         const immediateSnapshot = yield* Fiber.join(snapshotFiber);
         assert.isNull(immediateSnapshot.projects[0]?.repositoryIdentity ?? null);

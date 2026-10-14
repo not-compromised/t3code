@@ -454,12 +454,14 @@ it.effect.each(["success", "exhausted", "stale", "interrupted"] as const)(
   (outcome) =>
     Effect.gen(function* () {
       const attempted = yield* Deferred.make<void>();
+      const secondAttempted = yield* Deferred.make<void>();
       let attempts = 0;
       const harness = makeHarness({
         generateTitle: () =>
           Effect.gen(function* () {
             attempts += 1;
             yield* Deferred.succeed(attempted, undefined);
+            if (attempts === 2) yield* Deferred.succeed(secondAttempted, undefined);
             if (outcome === "success" && attempts === 3) return { title: "Recovered title" };
             return yield* new TextGenerationError({
               operation: "generateThreadTitle",
@@ -496,7 +498,10 @@ it.effect.each(["success", "exhausted", "stale", "interrupted"] as const)(
               title: "Manual title",
             });
           yield* TestClock.adjust("2 seconds");
-          if (outcome !== "stale") yield* TestClock.adjust("4 seconds");
+          if (outcome !== "stale") {
+            yield* Deferred.await(secondAttempted);
+            yield* TestClock.adjust("4 seconds");
+          }
           yield* Fiber.join(fiber);
         }
         assert.equal(attempts, outcome === "success" || outcome === "exhausted" ? 3 : 1);

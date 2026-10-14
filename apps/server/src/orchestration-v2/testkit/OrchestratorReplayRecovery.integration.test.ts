@@ -171,7 +171,7 @@ const runCursorRecovery = Effect.fn("runCursorRecovery")(function* (input: {
         runtimePolicyOverride: { cwd: tempDir },
       },
       harness,
-      options,
+      { ...options, recoverOnStartup: true },
     ),
   );
 
@@ -266,7 +266,7 @@ describe("orchestrator replay recovery", () => {
               runtimePolicyOverride: { cwd: workspace },
             },
             harness,
-            options,
+            { ...options, recoverOnStartup: true },
           );
 
           assertBaseProjection({
@@ -368,7 +368,7 @@ describe("orchestrator replay recovery", () => {
               runtimePolicyOverride: { cwd: workspace },
             },
             harness,
-            options,
+            { ...options, recoverOnStartup: true },
           ),
         );
         yield* assertComplete;

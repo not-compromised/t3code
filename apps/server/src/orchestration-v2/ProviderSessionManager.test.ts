@@ -325,6 +325,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly spawnBeforeOpen?: boolean;
     /** Completed when a hanging scope close reaches its wedged finalizer. */
     readonly scopeCloseReached?: Deferred.Deferred<void>;
+    readonly scopeClosed?: Deferred.Deferred<void>;
   } = {},
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
@@ -332,7 +333,13 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     Ref.update(state, (current) => ({
       ...current,
       closeCount: current.closeCount + 1,
-    })),
+    })).pipe(
+      Effect.andThen(
+        options.scopeClosed === undefined
+          ? Effect.void
+          : Deferred.succeed(options.scopeClosed, undefined),
+      ),
+    ),
   );
   // Registered after countClose so it runs first on scope close, wedging the
   // close before the closeCount finalizer, like a provider process that never
@@ -470,6 +477,7 @@ function layerTest(input: {
   readonly beforeUnload?: Effect.Effect<void>;
   readonly spawnBeforeOpen?: boolean;
   readonly scopeCloseReached?: Deferred.Deferred<void>;
+  readonly scopeClosed?: Deferred.Deferred<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
 }) {
@@ -502,6 +510,7 @@ function layerTest(input: {
       ...(input.scopeCloseReached === undefined
         ? {}
         : { scopeCloseReached: input.scopeCloseReached }),
+      ...(input.scopeClosed === undefined ? {} : { scopeClosed: input.scopeClosed }),
     }).pipe(Effect.map(ProviderAdapterRegistry.layerSingle)),
   );
   const layerConfiguredMcpRegistry =
@@ -2842,6 +2851,7 @@ it.effect("ProviderSessionManagerV2 releases pinned idle sessions once the pin c
 it.effect("ProviderSessionManagerV2 keeps pinned work that reports progress", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
+    const scopeClosed = yield* Deferred.make<void>();
     const effect = Effect.gen(function* () {
       const eventSink = yield* EventSink.EventSinkV2;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -2868,28 +2878,37 @@ it.effect("ProviderSessionManagerV2 keeps pinned work that reports progress", ()
       });
       const adapterQueue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
       assert.isDefined(adapterQueue);
-      const step = (duration: Parameters<typeof TestClock.adjust>[0]) =>
-        Effect.gen(function* () {
-          yield* TestClock.adjust(duration);
-          for (let i = 0; i < 20; i += 1) yield* Effect.yieldNow;
-        });
 
       // A long workflow keeps reporting progress well past the pin cap.
       for (let tick = 0; tick < 12; tick += 1) {
-        yield* step("1500 millis");
-        yield* Queue.offer(adapterQueue!, {
-          type: "provider_session.updated",
-          driver: CODEX_DRIVER,
-          providerSession: runtime.providerSession,
-        });
-        for (let i = 0; i < 20; i += 1) yield* Effect.yieldNow;
+        yield* TestClock.adjust("1500 millis");
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const subscription = yield* Effect.acquireRelease(
+              runtime.subscribeEvents!,
+              (sub) => sub.close,
+            );
+            const received = yield* subscription.events.pipe(
+              Stream.filter((event) => event.type === "provider_session.updated"),
+              Stream.runHead,
+              Effect.forkScoped,
+            );
+            yield* Queue.offer(adapterQueue!, {
+              type: "provider_session.updated",
+              driver: CODEX_DRIVER,
+              providerSession: runtime.providerSession,
+            });
+            yield* Fiber.join(received);
+          }),
+        );
       }
       assert.equal((yield* Ref.get(state)).closeCount, 0);
 
       // Work that goes silent past the cap is still stopped.
       for (let tick = 0; tick < 6; tick += 1) {
-        yield* step("1 second");
+        yield* TestClock.adjust("1 second");
       }
+      yield* Deferred.await(scopeClosed);
       assert.equal((yield* Ref.get(state)).closeCount, 1);
     });
 
@@ -2900,6 +2919,7 @@ it.effect("ProviderSessionManagerV2 keeps pinned work that reports progress", ()
           idleTimeoutMs: 1000,
           maxIdlePinMs: 3000,
           hasPendingBackgroundWork: Effect.succeed(true),
+          scopeClosed,
         }),
       ),
     );

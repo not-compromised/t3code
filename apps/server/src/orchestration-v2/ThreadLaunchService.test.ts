@@ -976,12 +976,17 @@ it.effect("generates an initial title for an attachment-only message", () =>
 
 it.effect("uses the available source control writer for generated worktree branches", () =>
   Effect.gen(function* () {
+    const branchNameStarted = yield* Deferred.make<void>();
     const writerInstanceId = ProviderInstanceId.make("source-control-writer");
     const writerModelSelection = {
       instanceId: writerInstanceId,
       model: "branch-writer-model",
     } as const;
     const harness = makeHarness({
+      generateBranchName: () =>
+        Deferred.succeed(branchNameStarted, undefined).pipe(
+          Effect.as({ branch: "generated-branch" }),
+        ),
       serverSettings: {
         providerInstances: {
           [writerInstanceId]: {
@@ -1019,7 +1024,8 @@ it.effect("uses the available source control writer for generated worktree branc
           workspace: { type: "worktree", baseRef: "main" },
         }),
       );
-      yield* waitUntil(() => Effect.sync(() => harness.generateBranchName.mock.calls.length === 1));
+      yield* Deferred.await(branchNameStarted);
+      assert.equal(harness.generateBranchName.mock.calls.length, 1);
       assert.deepEqual(
         harness.generateBranchName.mock.calls[0]?.[0]?.modelSelection,
         writerModelSelection,
@@ -1030,8 +1036,13 @@ it.effect("uses the available source control writer for generated worktree branc
 
 it.effect("falls back when the source control writer is unavailable", () =>
   Effect.gen(function* () {
+    const branchNameStarted = yield* Deferred.make<void>();
     const writerInstanceId = ProviderInstanceId.make("missing-source-control-writer");
     const harness = makeHarness({
+      generateBranchName: () =>
+        Deferred.succeed(branchNameStarted, undefined).pipe(
+          Effect.as({ branch: "generated-branch" }),
+        ),
       serverSettings: {
         providerInstances: {
           [writerInstanceId]: {
@@ -1057,7 +1068,8 @@ it.effect("falls back when the source control writer is unavailable", () =>
           workspace: { type: "worktree", baseRef: "main" },
         }),
       );
-      yield* waitUntil(() => Effect.sync(() => harness.generateBranchName.mock.calls.length === 1));
+      yield* Deferred.await(branchNameStarted);
+      assert.equal(harness.generateBranchName.mock.calls.length, 1);
       assert.deepEqual(
         harness.generateBranchName.mock.calls[0]?.[0]?.modelSelection,
         DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
@@ -1068,9 +1080,12 @@ it.effect("falls back when the source control writer is unavailable", () =>
 
 it.effect("runs a Scratch thread launched at the root in its own folder", () =>
   Effect.gen(function* () {
+    const setupStarted = yield* Deferred.make<void>();
     // Only `projectId` stands in for the Scratch project here.
     const claimed: Array<{ readonly threadId: ThreadId; readonly text: string }> = [];
     const harness = makeHarness({
+      runSetup: () =>
+        Deferred.succeed(setupStarted, undefined).pipe(Effect.as({ status: "no-script" as const })),
       managedFolders: Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         namedProjectsRoot: "/projects",
         folderForThread: (input) =>
@@ -1092,7 +1107,8 @@ it.effect("runs a Scratch thread launched at the root in its own folder", () =>
       const launched = yield* launches.launch(input);
       assert.deepEqual(claimed, [{ threadId: launched.threadId, text: "Convert these PNGs" }]);
       assert.equal(launched.projection.thread.worktreePath, "/scratch/folder-1");
-      yield* waitUntil(() => Effect.sync(() => harness.runSetup.mock.calls.length === 1));
+      yield* Deferred.await(setupStarted);
+      assert.equal(harness.runSetup.mock.calls.length, 1);
       assert.equal(harness.runSetup.mock.calls[0]?.[0]?.worktreePath, "/scratch/folder-1");
       assert.equal(harness.createWorktree.mock.calls.length, 0);
 
@@ -1121,7 +1137,19 @@ it.effect("runs a Scratch thread launched at the root in its own folder", () =>
 
 it.effect("names the worktree itself when the client provides no branch", () =>
   Effect.gen(function* () {
-    const harness = makeHarness();
+    const worktreeStarted = yield* Deferred.make<void>();
+    const harness = makeHarness({
+      createWorktree: (input) =>
+        Deferred.succeed(worktreeStarted, undefined).pipe(
+          Effect.as({
+            worktree: {
+              path: "/repo-worktrees/feature",
+              refName: input.newRefName,
+              headSha: "abc",
+            },
+          } as never),
+        ),
+    });
     yield* Effect.gen(function* () {
       const launches = yield* ThreadLaunch.ThreadLaunchService;
       const threads = yield* ThreadManagement.ThreadManagementService;
@@ -1133,15 +1161,23 @@ it.effect("names the worktree itself when the client provides no branch", () =>
           workspace: { type: "worktree", baseRef: "main" },
         }),
       );
-      yield* waitUntil(() => Effect.sync(() => harness.createWorktree.mock.calls.length === 1));
+      yield* Deferred.await(worktreeStarted);
+      assert.equal(harness.createWorktree.mock.calls.length, 1);
       assert.match(
         harness.createWorktree.mock.calls[0]?.[0]?.newRefName ?? "",
         /^t3\/[0-9a-f]{8}$/u,
       );
-      yield* waitUntil(() =>
-        threads
-          .getThreadProjection(launched.threadId)
-          .pipe(Effect.map((projection) => projection.thread.branch === "generated-branch")),
+      yield* threads.streamStoredEventsFrom({ threadId: launched.threadId }).pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.type === "thread.metadata-updated" &&
+            stored.event.payload.branch === "generated-branch",
+        ),
+        Stream.runHead,
+      );
+      assert.equal(
+        (yield* threads.getThreadProjection(launched.threadId)).thread.branch,
+        "generated-branch",
       );
     }).pipe(Effect.provide(harness.layer));
   }),
@@ -1232,7 +1268,19 @@ it.effect("provisions under t3-<hash> when a plain t3 branch blocks t3/*", () =>
 
 it.effect("keeps an explicit branch name instead of generating one", () =>
   Effect.gen(function* () {
-    const harness = makeHarness();
+    const worktreeStarted = yield* Deferred.make<void>();
+    const harness = makeHarness({
+      createWorktree: (input) =>
+        Deferred.succeed(worktreeStarted, undefined).pipe(
+          Effect.as({
+            worktree: {
+              path: "/repo-worktrees/feature",
+              refName: input.newRefName,
+              headSha: "abc",
+            },
+          } as never),
+        ),
+    });
     yield* Effect.gen(function* () {
       const launches = yield* ThreadLaunch.ThreadLaunchService;
       yield* launches.launch(
@@ -1243,7 +1291,8 @@ it.effect("keeps an explicit branch name instead of generating one", () =>
           workspace: { type: "worktree", baseRef: "main", branch: "my-feature" },
         }),
       );
-      yield* waitUntil(() => Effect.sync(() => harness.createWorktree.mock.calls.length === 1));
+      yield* Deferred.await(worktreeStarted);
+      assert.equal(harness.createWorktree.mock.calls.length, 1);
       assert.equal(harness.generateBranchName.mock.calls.length, 0);
       assert.equal(harness.createWorktree.mock.calls[0]?.[0]?.newRefName, "my-feature");
     }).pipe(Effect.provide(harness.layer));
@@ -1252,12 +1301,16 @@ it.effect("keeps an explicit branch name instead of generating one", () =>
 
 it.effect("keeps the temporary branch when branch generation fails", () =>
   Effect.gen(function* () {
+    const branchNameStarted = yield* Deferred.make<void>();
     const harness = makeHarness({
       createWorktree: (input) =>
         Effect.succeed({
           worktree: { path: "/repo-worktrees/temp", refName: input.newRefName, headSha: "abc" },
         } as never),
-      generateBranchName: () => Effect.die("branch generation is down"),
+      generateBranchName: () =>
+        Deferred.succeed(branchNameStarted, undefined).pipe(
+          Effect.andThen(Effect.die("branch generation is down")),
+        ),
     });
     yield* Effect.gen(function* () {
       const launches = yield* ThreadLaunch.ThreadLaunchService;
@@ -1270,12 +1323,19 @@ it.effect("keeps the temporary branch when branch generation fails", () =>
           workspace: { type: "worktree", baseRef: "main", branch: "t3/abcd1234" },
         }),
       );
-      yield* waitUntil(() => Effect.sync(() => harness.generateBranchName.mock.calls.length === 1));
+      yield* Deferred.await(branchNameStarted);
+      assert.equal(harness.generateBranchName.mock.calls.length, 1);
       assert.equal(harness.createWorktree.mock.calls[0]?.[0]?.newRefName, "t3/abcd1234");
-      yield* waitUntil(() =>
-        threads
-          .getThreadProjection(launched.threadId)
-          .pipe(Effect.map((projection) => projection.runs[0]?.status === "starting")),
+      yield* threads.streamStoredEventsFrom({ threadId: launched.threadId }).pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.type === "run.updated" && stored.event.payload.status === "starting",
+        ),
+        Stream.runHead,
+      );
+      assert.equal(
+        (yield* threads.getThreadProjection(launched.threadId)).runs[0]?.status,
+        "starting",
       );
       assert.equal(harness.renameBranch.mock.calls.length, 0);
       assert.equal(

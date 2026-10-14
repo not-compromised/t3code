@@ -175,12 +175,16 @@ it.effect.each(["child completion", "scheduled message", "user steering"] as con
           const threadId = ThreadId.make("thread:automatic-delivery");
           const projectId = ProjectId.make("project:automatic-delivery");
           const watch = (predicate: (event: OrchestrationV2DomainEvent) => boolean) =>
-            orchestrator.streamDomainEvents.pipe(
-              Stream.filter(predicate),
-              Stream.take(1),
-              Stream.runDrain,
-              Effect.forkScoped,
-            );
+            Effect.gen(function* () {
+              const afterSequence = yield* orchestrator.getThreadEventSequence(threadId);
+              return yield* orchestrator.streamStoredEventsFrom({ threadId, afterSequence }).pipe(
+                Stream.map((stored) => stored.event),
+                Stream.filter(predicate),
+                Stream.take(1),
+                Stream.runDrain,
+                Effect.forkScoped,
+              );
+            });
           yield* orchestrator.dispatch({
             type: "thread.create",
             commandId: CommandId.make("create"),
