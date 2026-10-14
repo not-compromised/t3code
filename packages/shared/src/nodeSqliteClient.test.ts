@@ -11,6 +11,8 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Scheduler from "effect/Scheduler";
+import * as Scope from "effect/Scope";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SqliteClient from "./nodeSqliteClient.ts";
@@ -18,6 +20,53 @@ import * as SqliteClient from "./nodeSqliteClient.ts";
 const layer = it.layer(SqliteClient.layer({ filename: ":memory:" }));
 
 layer("NodeSqliteClient", (it) => {
+  it.effect.each(["statement", "reservation", "transaction"] as const)(
+    "keeps the connection usable after cancelling a %s at a scheduler yield",
+    (kind) =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const operation =
+          kind === "reservation"
+            ? Effect.scoped(Effect.andThen(sql.reserve, Effect.never))
+            : kind === "transaction"
+              ? sql.withTransaction(sql`SELECT 1`)
+              : sql`SELECT 1`;
+        for (let prefix = 0; prefix < 12; prefix++) {
+          for (let step = 0; step < 12; step++) {
+            const fiber = yield* Effect.gen(function* () {
+              // Shift scheduler yields across acquisition and finalizer registration.
+              for (let index = 0; index < prefix; index++) yield* Effect.sync(() => index);
+              yield* operation;
+            }).pipe(Effect.provideService(Scheduler.MaxOpsBeforeYield, 8), Effect.forkChild);
+            for (let index = 0; index < step; index++) yield* Effect.yieldNow;
+            yield* Fiber.interrupt(fiber);
+            assert.deepEqual(yield* sql`SELECT 1 AS usable`.values, [[1]]);
+          }
+        }
+      }),
+  );
+
+  it.effect.each(["statement", "reservation"] as const)(
+    "can cancel a waiting %s while another caller holds the connection",
+    (kind) =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const lease = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+          Scope.close(scope, Exit.void),
+        );
+        yield* Scope.provide(sql.reserve, lease);
+        const operation =
+          kind === "reservation"
+            ? Effect.scoped(Effect.andThen(sql.reserve, Effect.never))
+            : sql`SELECT 1`;
+        const waiter = yield* operation.pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Fiber.interrupt(waiter);
+        assert(Exit.hasInterrupts(yield* Fiber.await(waiter)));
+        yield* Scope.close(lease, Exit.void);
+        assert.deepEqual(yield* sql`SELECT 1 AS usable`.values, [[1]]);
+      }),
+  );
+
   it.effect("retries preparing a query after the missing schema becomes available", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -290,6 +339,26 @@ it.effect("keeps another connection from committing between a transaction's read
       assert.deepEqual(yield* sql`SELECT value FROM counters WHERE id = 1`.values, [[11]]);
     }).pipe(Effect.provide(SqliteClient.layer({ filename })));
   }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("keeps the sequential worker usable after cancelling a database scan", () =>
+  Effect.gen(function* () {
+    const scan = Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      assert.deepEqual(yield* sql`SELECT 1`.values, [[1]]);
+    }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" })));
+    for (let prefix = 0; prefix < 12; prefix++) {
+      for (let step = 0; step < 12; step++) {
+        const fiber = yield* Effect.gen(function* () {
+          for (let index = 0; index < prefix; index++) yield* Effect.sync(() => index);
+          yield* scan;
+        }).pipe(Effect.provideService(Scheduler.MaxOpsBeforeYield, 8), Effect.forkChild);
+        for (let index = 0; index < step; index++) yield* Effect.yieldNow;
+        yield* Fiber.interrupt(fiber);
+        yield* scan;
+      }
+    }
+  }).pipe(Effect.provide(SqliteClient.layerSequentialWorker)),
 );
 
 it.effect("isolates databases and access modes when a sequential scan reuses its worker", () =>

@@ -8,7 +8,6 @@ import * as NodeWorkerThreads from "node:worker_threads";
 
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Predicate from "effect/Predicate";
@@ -115,6 +114,23 @@ class SequentialSqliteWorker extends Context.Service<
     readonly reserve: Effect.Effect<SqliteWorkerConnection, SqlError, Scope.Scope>;
   }
 >()("@t3tools/shared/nodeSqliteClient/SequentialSqliteWorker") {}
+
+const takeScopedPermit = (semaphore: Semaphore.Semaphore) =>
+  Effect.uninterruptibleMask((restore) =>
+    Effect.gen(function* () {
+      const scope = yield* Effect.scope;
+      // Taking the permit and registering its release must be atomic with
+      // respect to interruption. Waiting for an available permit must still
+      // be interruptible, so wait with a temporary lease and retry the take.
+      while (true) {
+        if (yield* semaphore.takeIfAvailable(1)) {
+          yield* Scope.addFinalizer(scope, semaphore.release(1));
+          return;
+        }
+        yield* restore(semaphore.withPermits(1)(Effect.void));
+      }
+    }),
+  );
 
 const makeWorker = Effect.fnUntraced(function* (): Effect.fn.Return<
   SqliteWorkerConnection,
@@ -230,12 +246,7 @@ export const layerSequentialWorker = Layer.effect(
     const getWorker = yield* Effect.cached(Scope.provide(makeWorker(), scope));
     return SequentialSqliteWorker.of({
       reserve: Effect.uninterruptibleMask((restore) =>
-        Effect.gen(function* () {
-          const lease = yield* Effect.scope;
-          yield* restore(semaphore.take(1));
-          yield* Scope.addFinalizer(lease, semaphore.release(1));
-          return yield* getWorker;
-        }),
+        Effect.andThen(restore(takeScopedPermit(semaphore)), getWorker),
       ),
     });
   }),
@@ -317,17 +328,11 @@ const make = Effect.fn("makeWithDatabase")(function* (
   const semaphore = yield* Semaphore.make(1);
   const connection = yield* makeConnection;
 
-  const transactionAcquirer = Effect.uninterruptibleMask((restore) => {
-    const fiber = Fiber.getCurrent()!;
-    const scope = Context.getUnsafe(fiber.context, Scope.Scope);
-    return Effect.as(
-      Effect.tap(restore(semaphore.take(1)), () => Scope.addFinalizer(scope, semaphore.release(1))),
-      connection,
-    );
-  });
+  const transactionAcquirer = Effect.as(takeScopedPermit(semaphore), connection);
 
   return yield* Client.make({
     acquirer: transactionAcquirer,
+    borrower: (use) => semaphore.withPermits(1)(use(connection)),
     compiler,
     transactionAcquirer,
     // A deferred BEGIN only takes the write lock at the first write. If another
