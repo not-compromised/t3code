@@ -39,6 +39,7 @@ export const GET_LOCAL_THEME_CHANNEL = "desktop:get-local-theme";
 export const SET_LOCAL_THEME_FILE_CHANNEL = "desktop:set-local-theme-file";
 export const PICK_LOCAL_THEME_FILE_CHANNEL = "desktop:pick-local-theme-file";
 export const LOCAL_THEME_CHANNEL = "desktop:local-theme";
+export const GET_WRITE_GUARD_CHANNEL = "desktop:get-write-guard";
 export const GET_CLIENT_SETTINGS_CHANNEL = "desktop:get-client-settings";
 export const SET_CLIENT_SETTINGS_CHANNEL = "desktop:set-client-settings";
 export const SETUP_SNAP_SHOT_CHANNEL = "desktop:setup-snap-shot";

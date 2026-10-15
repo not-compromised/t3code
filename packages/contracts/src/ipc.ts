@@ -11,6 +11,15 @@ export const DesktopLocalThemeStateSchema = Schema.Struct({
 });
 export type DesktopLocalThemeState = typeof DesktopLocalThemeStateSchema.Type;
 
+/** The desktop's write guard: "off" while its settings file is absent. */
+export const DesktopWriteGuardStateSchema = Schema.Struct({
+  status: Schema.Literals(["off", "on", "invalid"]),
+  settingsPath: Schema.String,
+  protectedRepositories: Schema.Array(Schema.String),
+  problem: Schema.NullOr(Schema.String),
+});
+export type DesktopWriteGuardState = typeof DesktopWriteGuardStateSchema.Type;
+
 import { SnapShotSource } from "./chatAttachment.ts";
 import { EnvironmentId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { BrowserProfileId } from "./browserProfile.ts";
@@ -1138,6 +1147,7 @@ export interface DesktopBridge {
   setLocalThemeFile?: (path: string | null) => Promise<DesktopLocalThemeState>;
   pickLocalThemeFile?: () => Promise<string | null>;
   onLocalTheme?: (listener: (state: DesktopLocalThemeState) => void) => () => void;
+  getWriteGuard?: () => Promise<DesktopWriteGuardState>;
   getAppBranding: () => DesktopAppBranding | null;
   /** Absolute path of a dropped or picked file; absent on desktop builds predating it. */
   getPathForFile?: (file: File) => string;

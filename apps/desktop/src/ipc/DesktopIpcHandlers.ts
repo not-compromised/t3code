@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import { getLocalTheme, pickLocalThemeFile, setLocalThemeFile } from "./methods/localTheme.ts";
+import { getWriteGuard } from "./methods/writeGuard.ts";
 
 import { receiveProviderAuthCallback, cancelProviderAuthCallback } from "./methods/providerAuth.ts";
 import * as DesktopIpc from "./DesktopIpc.ts";
@@ -105,6 +106,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(getLocalTheme);
   yield* ipc.handle(setLocalThemeFile);
   yield* ipc.handle(pickLocalThemeFile);
+  yield* ipc.handle(getWriteGuard);
   yield* ipc.handle(getClientSettings);
   yield* ipc.handle(setClientSettings);
   yield* ipc.handle(getConnectionCatalog);

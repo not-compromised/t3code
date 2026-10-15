@@ -7,12 +7,12 @@ nightly.
 
 ## Branches
 
-| Branch | What it is |
-|---|---|
-| `custom` | Default branch. The upstream nightly in `upstream-mirror` plus this fork's commits on top. |
-| `upstream-mirror` | The exact upstream nightly commit `custom` sits on. Never commit to it. |
-| `fork/candidate` | Scratch output of the nightly run. Never base work on it. |
-| `<type>/<slug>` | A change to this fork, based on `custom`, merged by PR. |
+| Branch            | What it is                                                                                                                          |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `custom`          | Default branch. The upstream nightly in `upstream-mirror` plus this fork's commits on top.                                          |
+| `upstream-mirror` | The exact upstream nightly commit `custom` sits on. Never commit to it.                                                             |
+| `fork/candidate`  | Scratch output of the nightly run. Never base work on it.                                                                           |
+| `<type>/<slug>`   | A change to this fork, based on `custom`, merged by PR.                                                                             |
 | `upstream/<slug>` | An upstream pull request branch, based on upstream `main`. `feat/desktop-local-theme` (pingdotgg/t3code#17883) predates the naming. |
 
 ## Rolling rebase
@@ -171,6 +171,47 @@ otherwise.
   upstream; this fork update changes their bundled fork counterparts only.
 - **Detail:** not-compromised/t3code#8, not-compromised/t3code#10.
 - **Retire when:** upstream's dependency requirements exclude the vulnerable versions.
+
+### Write guard for protected checkouts
+
+- **Commits:** `feat(desktop): refuse editor writes into protected checkouts`
+- **Must still be true:**
+  - Off by default: with no `write-guard.json` in the desktop's state
+    directory (`~/.t3/userdata` for the packaged app), every file write the
+    desktop app makes reaches the server exactly as it would without this
+    customization. Outside the desktop app nothing is wrapped.
+  - On while that file exists and names repositories
+    (`{"protectedRepositories": ["github.com/<owner>/<repo>"]}`): a write from
+    the file editor or the plan card's save whose real destination, after
+    every link, lies inside any checkout or worktree with a remote that is
+    one of them is refused before the server is asked. A notice names the file,
+    where it really leads and the checkout, and carries the attempted change
+    as a diff that copies in full.
+  - A destination the guard cannot establish, a settings file it cannot use
+    (including a link to a missing file, or an entry that is not
+    host/owner/repo), or a desktop that cannot report the guard's state
+    refuses the write; none of them lets it through.
+  - The file is read on every write, so adding or removing it switches the
+    guard without a restart. Writes to one file still land in the order made.
+  - A link whose target does not exist yet looks like a new file to a stock
+    server, so that write goes ahead; the guard checks it again once written,
+    shows a notice if it landed in a protected checkout, and refuses every
+    later write to it. A file link it cannot trace is refused.
+  - Nothing the desktop app sends a server changes, except that while the
+    guard is on it first sends `projects.readFile` and `projects.listEntries`
+    requests, which stock servers already answer.
+- **Limits:** agents' own file edits run in provider processes on the
+  servers, and T3's server-side tools are stock, so neither passes through
+  this guard; hooks in the agents themselves and a commit check cover them.
+  Stock servers expose no link counts, devices or git settings, so hardlinks,
+  bind mounts, a `.git` kept outside the working tree, SSH host aliases,
+  `insteadOf` and `[include]`d remotes go unseen. A file allowed in the last
+  10 seconds is not checked again on its next save. POSIX servers only.
+- **Tests:** `apps/web/src/writeGuard/*.test.ts`,
+  `apps/web/src/state/projects.writeGuard.test.ts`,
+  `apps/desktop/src/writeGuard/DesktopWriteGuard.test.ts`.
+- **Detail:** not-compromised/tools#615.
+- **Retire when:** never; it guards this fleet's own checkouts.
 
 ## Verification
 

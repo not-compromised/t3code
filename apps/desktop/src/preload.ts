@@ -124,6 +124,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.on(IpcChannels.LOCAL_THEME_CHANNEL, handler);
     return () => ipcRenderer.removeListener(IpcChannels.LOCAL_THEME_CHANNEL, handler);
   },
+  getWriteGuard: () => ipcRenderer.invoke(IpcChannels.GET_WRITE_GUARD_CHANNEL),
   getClientSettings: () => ipcRenderer.invoke(IpcChannels.GET_CLIENT_SETTINGS_CHANNEL),
   setClientSettings: (settings) =>
     ipcRenderer.invoke(IpcChannels.SET_CLIENT_SETTINGS_CHANNEL, settings),
