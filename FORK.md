@@ -32,7 +32,8 @@ nightly.
 
 ## Nightly pipeline
 
-`.github/workflows/fork-nightly.yml` runs daily at 07:35 UTC and on demand.
+`.github/workflows/fork-nightly.yml` runs only when the owner asks for an
+update; nothing starts it on a schedule.
 
 1. It picks the newest upstream nightly release tag.
 2. It refuses to ship by itself if `ORCHESTRATION_PROTOCOL_VERSION` changed,
@@ -128,12 +129,14 @@ otherwise.
 
 - **Commits:** `chore(fork): nightly rolling rebase and release pipeline`,
   `fix(fork): revive the nightly schedule GitHub dropped`,
-  `chore(fork): dispatch the nightly from the owner's server`
+  `chore(fork): dispatch the nightly from the owner's server`,
+  `docs(fork): the nightly runs only when the owner asks`
 - **Must still be true:**
   - On each dispatch, the newest upstream nightly gets `custom` replayed onto
-    it, checked and built; it ships only when every step is green. GitHub
-    never starts it on a schedule: the owner's server dispatches it once a
-    night, or by day after the owner approves.
+    it, checked and built; it ships only when every step is green. Nothing
+    starts it on a schedule: it runs only when the owner asks for an update,
+    because installing a release restarts servers and interrupts their
+    running agents.
   - A changed `ORCHESTRATION_PROTOCOL_VERSION` never ships without
     `allow_protocol_change`.
   - A release carries the upstream version unchanged, and fork builds update
@@ -150,7 +153,8 @@ otherwise.
   promise above that can be checked without running Actions.
 - **Detail:** this file and `.github/workflows/fork-nightly.yml`;
   not-compromised/t3code#6 (nightly schedule revival),
-  not-compromised/t3code#12 (dispatch from the owner's server).
+  not-compromised/t3code#12 (dispatch from the owner's server),
+  not-compromised/t3code#21 (runs only when the owner asks).
 - **Retire when:** never.
 
 ### Dependency security fixes

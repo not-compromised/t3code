@@ -4,8 +4,9 @@
 # installed apps, servers and the version-skew check all see one number.
 name: Fork nightly
 
-# No schedule: the owner's server dispatches this once a night, or by day after
-# the owner approves. GitHub's cron dropped runs and fired hours late (#12).
+# No schedule: this runs only when the owner asks for an update. GitHub's cron
+# dropped runs and fired hours late (#12), and automatic installs interrupted
+# running agents.
 on:
   workflow_dispatch:
     inputs:
