@@ -1,0 +1,103 @@
+name: iOS Personal Build
+
+# Builds an unsigned Release iPhone app with the Personal Team settings, so a
+# free Apple ID can sign and sideload it (apps/mobile/README.md). Fork-only:
+# upstream ships through EAS instead.
+on:
+  push:
+    branches:
+      - ios/personal-build
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  NODE_OPTIONS: --max-old-space-size=8192
+  APP_VARIANT: production
+  EXPO_NO_GIT_STATUS: "1"
+  T3CODE_IOS_PERSONAL_TEAM: "1"
+  # A free Apple ID registers this ID on first sign; keep it stable so each
+  # weekly re-sign reuses the same App ID instead of spending a new one.
+  T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID: io.github.notcompromised.t3code
+
+jobs:
+  ios:
+    name: Unsigned iPhone app
+    runs-on: macos-26
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/mobile...
+              - --filter=@t3tools/scripts...
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          node --version
+          pod --version
+
+      - name: Generate native project
+        working-directory: apps/mobile
+        run: npx expo prebuild --clean --platform ios
+
+      - name: Build Release app without signing
+        working-directory: apps/mobile/ios
+        run: |
+          workspace="$(ls -d ./*.xcworkspace | head -n 1)"
+          scheme="$(basename "$workspace" .xcworkspace)"
+          echo "Building scheme $scheme"
+          xcodebuild \
+            -workspace "$workspace" \
+            -scheme "$scheme" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            > xcodebuild.log 2>&1 || { grep -E "error:|BUILD FAILED" xcodebuild.log | tail -n 60; tail -n 80 xcodebuild.log; exit 1; }
+          tail -n 5 xcodebuild.log
+
+      - name: Package IPA
+        working-directory: apps/mobile/ios
+        run: |
+          app="$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' | head -n 1)"
+          test -n "$app"
+          mkdir -p Payload
+          cp -R "$app" Payload/
+          zip -qry ../../../T3Code-personal-unsigned.ipa Payload
+          ls -lh ../../../T3Code-personal-unsigned.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v7
+        with:
+          name: T3Code-personal-unsigned-ipa
+          path: T3Code-personal-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: xcodebuild-log
+          path: apps/mobile/ios/xcodebuild.log
+          if-no-files-found: ignore
+          retention-days: 14
