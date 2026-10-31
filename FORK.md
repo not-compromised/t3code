@@ -124,6 +124,16 @@ otherwise.
   user guide in `docs/user/appearance.md`, Desktop colors.
 - **Retire when:** upstream merges pingdotgg/t3code#17883.
 
+### Mixed settings recovery
+
+- **Commits:** `fix(web): mixed settings switches can reverse partial saves`
+- **Must still be true:**
+  - After a setting saves on only some environments, the next switch click
+    can reverse that request while the selection remains mixed.
+  - Uniform values always reflect the servers' settings. Unsupported-server
+    warnings and the settings protocol stay unchanged.
+- **Retire when:** upstream lets mixed settings switches reverse partial saves.
+
 ### Fork pipeline
 
 - **Commits:** `chore(fork): nightly rolling rebase and release pipeline`,
