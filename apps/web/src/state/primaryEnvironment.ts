@@ -13,15 +13,12 @@ export const primaryEnvironmentIdAtom = Atom.make((get) => {
   return null;
 }).pipe(Atom.withLabel("web-primary-environment-id"));
 
-export const hostEnvironmentIdAtom = Atom.make<string | null>(null).pipe(
+const hostEnvironmentIdAtom = Atom.make<string | null>(null).pipe(
   Atom.keepAlive,
   Atom.withLabel("web-host-environment-id"),
 );
 
-/**
- * The environment whose published themes and default theme apply: the primary environment, or,
- * on a desktop app without one, the connected background service that shares its T3 home.
- */
+// Without a primary, only the service sharing the desktop app's T3 home supplies themes.
 export function createThemeEnvironmentIdAtom(input: {
   readonly primaryEnvironmentIdAtom: Atom.Atom<EnvironmentId | null>;
   readonly hostEnvironmentIdAtom: Atom.Atom<string | null>;
