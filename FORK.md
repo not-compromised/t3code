@@ -132,6 +132,7 @@ otherwise.
     can reverse that request while the selection remains mixed.
   - Uniform values always reflect the servers' settings. Unsupported-server
     warnings and the settings protocol stay unchanged.
+- **Detail:** not-compromised/t3code#22.
 - **Retire when:** upstream lets mixed settings switches reverse partial saves.
 
 ### Fork pipeline
