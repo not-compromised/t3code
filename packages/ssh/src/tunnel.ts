@@ -51,7 +51,8 @@ const SSH_READY_PROBE_TIMEOUT_MS = 1_000;
 const TUNNEL_SHUTDOWN_TIMEOUT_MS = 2_000;
 const TUNNEL_STDERR_TAIL_CHARS = 16_384;
 const REMOTE_READY_TIMEOUT_MS = 60_000;
-const REMOTE_LAUNCH_TIMEOUT_MS = 90_000;
+// Covers the wait for a restarting background service plus our own server's readiness.
+const REMOTE_LAUNCH_TIMEOUT_MS = 120_000;
 // Cold archive launches download and extract ~70 MB and may wait on an install lock.
 // Lock waits must outlast both downloads and extraction; SSH must outlast install or wait plus readiness.
 // Leave slack for verification and extraction, which have no timeout.
@@ -60,6 +61,8 @@ const REMOTE_ARCHIVE_DOWNLOAD_SECONDS = 240;
 const REMOTE_ARCHIVE_LOCK_WAIT_SECONDS = 360;
 const REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS = 900_000;
 const REMOTE_REUSE_READY_TIMEOUT_MS = 2_000;
+// How long a launch waits for this home's restarting background service before starting its own server.
+const REMOTE_SERVICE_WAIT_SECONDS = 30;
 
 export interface RemoteT3RunnerOptions {
   readonly nodeScriptPath?: string | null;
@@ -619,6 +622,23 @@ try {
 }
 NODE
 }
+# True while this home's background service (\`t3 service install\`) is loaded,
+# including between its servers. Names match apps/server/src/cloud/bootService.ts;
+# service-state.json ties the service to this home.
+boot_service_loaded() {
+  [ -f "$DEFAULT_SERVER_HOME/runtime/service-state.json" ] || return 1
+  if command -v systemctl >/dev/null 2>&1; then
+    case "$(systemctl --user is-active t3code.service 2>/dev/null || true)" in
+      active | activating | reloading) return 0 ;;
+    esac
+    return 1
+  fi
+  if command -v launchctl >/dev/null 2>&1; then
+    launchctl print "gui/$(id -u)/com.t3tools.t3code.service" >/dev/null 2>&1
+    return
+  fi
+  return 1
+}
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
 REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
@@ -690,6 +710,29 @@ else
   REMOTE_PID=""
   REMOTE_PORT=""
   REMOTE_MANAGED=""
+fi
+# A background service has no server for a few seconds while it restarts or
+# updates. A server started in that gap owns the home and locks the service
+# out until someone stops it, so give the service time to come back first.
+if [ -z "$REMOTE_PORT" ] && boot_service_loaded; then
+  SERVICE_WAIT_COUNT=0
+  while [ "$SERVICE_WAIT_COUNT" -lt "@@T3_SERVICE_WAIT_SECONDS@@" ]; do
+    DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
+    if [ -n "$DEFAULT_RUNTIME_INFO" ]; then
+      REMOTE_PORT="\${DEFAULT_RUNTIME_INFO#* }"
+      if wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
+        REMOTE_PID=""
+        REMOTE_MANAGED="external"
+        rm -f "$PID_FILE"
+        printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
+        printf 'external\\n' >"$MANAGED_FILE"
+        break
+      fi
+      REMOTE_PORT=""
+    fi
+    SERVICE_WAIT_COUNT=$((SERVICE_WAIT_COUNT + 1))
+    sleep 1
+  done
 fi
 if [ -z "$REMOTE_PORT" ]; then
   REMOTE_PORT="$(pick_port)" || true
@@ -825,7 +868,7 @@ export function buildRemoteNodeEnvScript(input?: RemoteT3RunnerOptions): string 
   );
 }
 
-function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
+export function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
   return applyScriptPlaceholders(REMOTE_LAUNCH_SCRIPT, {
     T3_ARCHIVE_MODE: isNodeScriptRunner(input) ? "0" : "1",
     T3_NODE_ENV_SCRIPT: buildRemoteNodeEnvScript(input),
@@ -836,6 +879,7 @@ function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
     T3_REMOTE_PORT_SCAN_WINDOW: String(REMOTE_PORT_SCAN_WINDOW),
     T3_READY_TIMEOUT_MS: String(REMOTE_READY_TIMEOUT_MS),
     T3_REUSE_READY_TIMEOUT_MS: String(REMOTE_REUSE_READY_TIMEOUT_MS),
+    T3_SERVICE_WAIT_SECONDS: String(REMOTE_SERVICE_WAIT_SECONDS),
     T3_READY_PROBE_TIMEOUT_MS: String(SSH_READY_PROBE_TIMEOUT_MS),
   });
 }
