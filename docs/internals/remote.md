@@ -165,7 +165,11 @@ renderer uses the forwarded endpoint through the shared connection runtime.
 [SSH cleanup](../../packages/ssh/src/tunnel.ts) stops a remote server only if the
 launcher owns it; a server it discovered already running must survive a client
 disconnect. Reconnection restores the forward before opening the application
-transport.
+transport. When the remote home has a loaded background service, the launch
+waits for that service's server before starting one: the service has no server
+for a few seconds while it restarts or updates, and a server started in that gap
+takes the [ownership lock](../../apps/server/src/serverOwnership.ts) and leaves
+the service idle until someone stops it.
 
 Remote servers can outlive several client releases. Clients must use advertised
 capabilities and handle their absence, rather than assume their own version
